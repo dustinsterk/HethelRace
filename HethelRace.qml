@@ -32,6 +32,7 @@
 **  The accent (RED / GREEN / BLUE settings) defaults to Lotus yellow
 **  255/224/0. The background tint (BG RED / GREEN / BLUE) defaults to Lotus
 **  green 0/120/74. The green used for bar fills and the rev-bar zone is fixed.
+**  THEME switches DARK / LIGHT (dark text on a near-white background).
 **
 **     Up                  open the settings menu
 **     Left / Right        move between settings
@@ -302,14 +303,32 @@ Item {
     property int  bgRed:   0
     property int  bgGreen: 120
     property int  bgBlue:  74
-    // shade of the tint: channel = tint * k + lift (lift is a neutral grey floor)
-    function bgS(k, lift) { return "#" + hx(bgRed * k + lift) + hx(bgGreen * k + lift) + hx(bgBlue * k + lift); }
-    function bgA(k, lift, a) {      // same, as a CSS rgba() string for the Canvas
+    // --- THEME: 0 = DARK (light text on a dark tinted background), 1 = LIGHT
+    //     (dark text on a near-white background; BG 255/255/255 = pure white).
+    property int  theme: 0
+    readonly property bool   light: theme === 1
+    readonly property string fg:        light ? "#0b1510" : "#ffffff"     // primary readouts
+    readonly property string fg2:       light ? "#24332c" : "#dbeee4"     // secondary text
+    readonly property string fgDim:     light ? "#4d6b5e" : "#8fb5a3"     // units / hints
+    readonly property string accentInk: light ? ("#" + hx(red * 0.55) + hx(green * 0.55) + hx(blue * 0.55)) : accent   // accent for text + thin lines
+    readonly property string greenInk:  light ? "#0c8a48" : lotusGreen
+    readonly property string redSoft:   light ? "#c81414" : "#ff7777"
+    // shade of the tint. DARK: channel = tint * k + lift (lift = neutral grey floor).
+    // LIGHT: the same role mapped onto white — white pulled toward the tint by k,
+    // then darkened a little so borders / panels stay visible on a white tint.
+    function bgC(c, k, lift) { return light ? (255 - (255 - c) * k * 0.9 - lift * 0.6 - k * 60) : (c * k + lift); }
+    function bgS(k, lift) { return "#" + hx(bgC(bgRed, k, lift)) + hx(bgC(bgGreen, k, lift)) + hx(bgC(bgBlue, k, lift)); }
+    function bgA(k, lift, a) {      // CSS rgba() string for the Canvas (centre glow: lift 0; hex weave: lift > 0)
         function c(v) { return Math.max(0, Math.min(255, Math.round(v))); }
+        if (light) {
+            var m = lift > 0 ? 0.5 : 1.0, al = lift > 0 ? a * 1.5 : a * 0.45;
+            return "rgba(" + c(bgRed * m) + "," + c(bgGreen * m) + "," + c(bgBlue * m) + "," + Number(al).toFixed(3) + ")";
+        }
         return "rgba(" + c(bgRed * k + lift) + "," + c(bgGreen * k + lift) + "," + c(bgBlue * k + lift) + "," + Number(a).toFixed(3) + ")";
     }
-    readonly property color bgPanel: Qt.rgba((bgRed * 0.158 + 7) / 255, (bgGreen * 0.158 + 7) / 255, (bgBlue * 0.158 + 7) / 255, 0.84)
-    readonly property int   bgKey: bgRed * 65536 + bgGreen * 256 + bgBlue
+    readonly property color bgPanel: Qt.rgba(Math.max(0, bgC(bgRed, 0.158, 7)) / 255, Math.max(0, bgC(bgGreen, 0.158, 7)) / 255,
+                                             Math.max(0, bgC(bgBlue, 0.158, 7)) / 255, 0.84)
+    readonly property int   bgKey: bgRed * 65536 + bgGreen * 256 + bgBlue + theme * 16777216
 
     // --- units ---
     property int  speedunits: 0        // 0 = km/h, 1 = mph
@@ -867,7 +886,7 @@ Item {
             // bottom bar
             ctx.fillStyle = root.bgS(0.142, 6); ctx.fillRect(0, 366, width, 44);
             ctx.fillStyle = root.bgS(0.508, 29); ctx.fillRect(0, 366, width, 2);
-            ctx.fillStyle = root.accent; ctx.fillRect(330, 366, 140, 2);
+            ctx.fillStyle = root.accentInk; ctx.fillRect(330, 366, 140, 2);
             ctx.fillStyle = root.bgS(0.325, 14); ctx.fillRect(0, 408, width, 2);
         }
 
@@ -882,7 +901,7 @@ Item {
                 ctx.save();
                 ctx.translate(root.arcCx + rm * Math.sin(th), root.arcCy - rm * Math.cos(th));
                 ctx.rotate(th);
-                ctx.fillStyle = redZone ? "#571a1a" : (major ? root.bgS(0.525, 44) : root.bgS(0.317, 20));
+                ctx.fillStyle = redZone ? (root.light ? "#f0c0c0" : "#571a1a") : (major ? root.bgS(0.525, 44) : root.bgS(0.317, 20));
                 ctx.fillRect(-root.segW / 2, -(ro - ri) / 2, root.segW, ro - ri);
                 ctx.restore();
             }
@@ -898,7 +917,7 @@ Item {
             var rLbl = root.arcRi - 24;
             for (var n = 0; n * 1000 <= root.rpmmax; n++) {
                 var th = root.arcTheta(n * 1000) * Math.PI / 180;
-                ctx.fillStyle = (n * 1000 >= root.revRedStart) ? "#ff6a6a" : "#dbeee4";
+                ctx.fillStyle = (n * 1000 >= root.revRedStart) ? root.redSoft : root.fg2;
                 ctx.fillText(String(n), root.arcCx + rLbl * Math.sin(th), root.arcCy - rLbl * Math.cos(th));
             }
         }
@@ -909,13 +928,13 @@ Item {
             var g = ctx.createLinearGradient(0, 138, 0, 262);
             g.addColorStop(0, root.bgS(0.25, 12)); g.addColorStop(1, root.bgS(0.083, 3));
             ctx.fillStyle = g; ctx.fill();
-            shield(ctx, 400, 200, 66, 62, 20); ctx.strokeStyle = root.accent; ctx.lineWidth = 2.5; ctx.stroke();
+            shield(ctx, 400, 200, 66, 62, 20); ctx.strokeStyle = root.accentInk; ctx.lineWidth = 2.5; ctx.stroke();
             shield(ctx, 400, 200, 59, 55, 17); ctx.strokeStyle = root.bgS(0.508, 29); ctx.lineWidth = 1.5; ctx.stroke();
             // wings: hairline + three slashes each side, pointing at the shield
             ctx.lineWidth = 2; ctx.strokeStyle = root.bgS(0.508, 29);
             ctx.beginPath(); ctx.moveTo(200, 236); ctx.lineTo(296, 236); ctx.stroke();
             ctx.beginPath(); ctx.moveTo(504, 236); ctx.lineTo(600, 236); ctx.stroke();
-            ctx.fillStyle = root.accent;
+            ctx.fillStyle = root.accentInk;
             for (var i = 0; i < 3; i++) {
                 ctx.globalAlpha = 1.0 - i * 0.3;
                 slash(ctx, 322 - i * 9, 229, 1); slash(ctx, 478 + i * 9, 229, -1);
@@ -999,7 +1018,7 @@ Item {
             readonly property real rm:  (root.arcRi + ro) / 2
             Rectangle {
                 width: root.segW + (revHead.hot ? 34 : 14); height: revHead.ro - root.arcRi + (revHead.hot ? 34 : 18); radius: 9
-                antialiasing: true; color: revHead.hot ? "#ff5a3a" : "#ffffff"; opacity: revHead.hot ? 0.30 : 0.16
+                antialiasing: true; color: revHead.hot ? "#ff5a3a" : root.fg; opacity: revHead.hot ? 0.30 : 0.16
                 Behavior on width { NumberAnimation { duration: 180 } }
                 x: root.arcCx + revHead.rm * Math.sin(revHead.thR) - width / 2
                 y: root.arcCy - revHead.rm * Math.cos(revHead.thR) - height / 2
@@ -1007,7 +1026,7 @@ Item {
             }
             Rectangle {
                 width: Math.max(3, root.segW * 0.7); height: revHead.ro - root.arcRi + 6
-                antialiasing: true; color: "#ffffff"
+                antialiasing: true; color: root.fg
                 x: root.arcCx + revHead.rm * Math.sin(revHead.thR) - width / 2
                 y: root.arcCy - revHead.rm * Math.cos(revHead.thR) - height / 2
                 rotation: revHead.th
@@ -1023,7 +1042,7 @@ Item {
             readonly property real rm:  (root.arcRi + ro) / 2
             width: 3; height: ro - root.arcRi + 4
             antialiasing: true
-            color: root.rpmTell >= root.revRedStart ? "#ff5555" : root.accent
+            color: root.rpmTell >= root.revRedStart ? "#ff5555" : root.accentInk
             opacity: (!root.selfTest && root.rpmTell > root.rpmShown + 150) ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: 200 } }
             x: root.arcCx + rm * Math.sin(thR) - width / 2
@@ -1046,7 +1065,7 @@ Item {
                 readonly property real rm:  (root.arcRi - 10 + ro) / 2
                 width: 4; height: ro - root.arcRi + 10; radius: 2
                 antialiasing: true
-                color: root.launchReady ? root.lotusGreen : "#ffffff"
+                color: root.launchReady ? root.lotusGreen : root.fg
                 opacity: root.launchArmed ? 1 : 0
                 Behavior on opacity { NumberAnimation { duration: 160 } }
                 visible: opacity > 0.01
@@ -1108,9 +1127,9 @@ Item {
                                                  || (root.inputs & bit) !== 0
                     width: 22; height: 10; radius: 5
                     color: !lit ? root.bgS(0.208, 16)
-                         : (root.overrev ? (root.blinkOn ? "#ff2a2a" : "#3a0d0d")
+                         : (root.overrev ? (root.blinkOn ? "#ff2a2a" : (root.light ? "#f0b4b4" : "#3a0d0d"))
                          : (pair < 2 ? root.lotusGreen : (pair < 4 ? "#ffe000" : "#ff2a2a")))
-                    border.width: 1; border.color: lit ? "#ffffff" : root.bgS(0.508, 29)
+                    border.width: 1; border.color: lit ? root.fg : root.bgS(0.508, 29)
                 }
             }
         }
@@ -1140,14 +1159,14 @@ Item {
             Text {   // outgoing digit
                 visible: root.gearRoll < 1
                 text: root.gearOld
-                color: "#ffffff"; opacity: 1 - root.gearRoll
+                color: root.fg; opacity: 1 - root.gearRoll
                 font.family: root.menuFont; font.bold: true; font.pixelSize: 104
                 anchors.centerIn: parent
                 anchors.verticalCenterOffset: -1 - root.gearDir * root.gearRoll * 96
             }
             Text {   // current digit
                 text: root.gearLabel
-                color: root.overrev ? "#ffe9e9" : (root.raceAmt > 0.5 ? root.accent : "#ffffff")
+                color: root.overrev ? (root.light ? "#a01010" : "#ffe9e9") : (root.raceAmt > 0.5 ? root.accentInk : root.fg)
                 opacity: 0.25 + 0.75 * root.gearRoll
                 font.family: root.menuFont; font.bold: true; font.pixelSize: 104
                 anchors.centerIn: parent
@@ -1164,7 +1183,7 @@ Item {
             text: root.engineOff ? (isRpm ? "––––" : "–––")
                                  : (isRpm ? String(Math.round(root.rpmShown / 10) * 10) : String(root.speedShown))
             color: root.engineOff ? root.bgS(0.325, 63)
-                 : ((isRpm && root.overrev) ? (root.blinkOn ? "#ff4040" : "#ff8a8a") : "#ffffff")
+                 : ((isRpm && root.overrev) ? (root.blinkOn ? "#ff4040" : "#ff8a8a") : root.fg)
             font.family: root.menuFont; font.bold: true; font.pixelSize: 58
             anchors.horizontalCenter: parent.horizontalCenter
             y: 260; opacity: root.intro
@@ -1174,8 +1193,8 @@ Item {
             text: root.launchFlash > 0.05 ? "GO"
                 : root.launchArmed ? (root.launchReady ? "READY" : (root.rpmShown < root.launchRpm ? "REV UP" : "TOO HIGH"))
                 : (bigNum.isRpm ? "RPM" : (root.speedunits === 0 ? "KM/H" : "MPH"))
-            color: launchMsg ? ((root.launchFlash > 0.05 || root.launchReady) ? root.lotusGreen : "#ffffff")
-                             : (root.engineOff ? root.bgS(0.325, 63) : root.accent)
+            color: launchMsg ? ((root.launchFlash > 0.05 || root.launchReady) ? root.greenInk : root.fg)
+                             : (root.engineOff ? root.bgS(0.325, 63) : root.accentInk)
             font.family: root.menuFont; font.bold: true; font.pixelSize: launchMsg ? 17 : 14
             font.letterSpacing: 3
             anchors.horizontalCenter: parent.horizontalCenter
@@ -1185,7 +1204,7 @@ Item {
         // ===== left wing: the secondary live readout (RPM by default) =====
         Text {
             text: bigNum.isRpm ? (root.speedunits === 0 ? "KM/H" : "MPH") : "RPM"
-            color: root.engineOff ? root.bgS(0.325, 63) : ((!bigNum.isRpm && root.overrev) ? "#ff5555" : root.accent)
+            color: root.engineOff ? root.bgS(0.325, 63) : ((!bigNum.isRpm && root.overrev) ? "#ff5555" : root.accentInk)
             font.family: root.menuFont; font.bold: true; font.pixelSize: 12; font.letterSpacing: 2
             x: 248 - width / 2; y: 168; opacity: root.intro
         }
@@ -1193,7 +1212,7 @@ Item {
             text: root.engineOff ? (bigNum.isRpm ? "–––" : "––––")
                                  : (bigNum.isRpm ? String(root.speedShown) : String(Math.round(root.rpmShown / 10) * 10))
             color: root.engineOff ? root.bgS(0.325, 63)
-                 : ((!bigNum.isRpm && root.overrev) ? (root.blinkOn ? "#ff4040" : "#ff8a8a") : "#ffffff")
+                 : ((!bigNum.isRpm && root.overrev) ? (root.blinkOn ? "#ff4040" : "#ff8a8a") : root.fg)
             font.family: root.menuFont; font.bold: true; font.pixelSize: 34
             x: 248 - width / 2; y: 183; opacity: root.intro
         }
@@ -1205,7 +1224,7 @@ Item {
                 : root.rightWing === 2 ? (root.speedunits === 0 ? "MAX KM/H" : "MAX MPH")
                 : root.rightWing === 3 ? "MAX RPM"
                 : root.rightWing === 4 ? "SESSION" : "PEAK G"
-            color: root.lotusGreen
+            color: root.greenInk
             font.family: root.menuFont; font.bold: true; font.pixelSize: 12; font.letterSpacing: 2
             x: 552 - width / 2; y: 168; opacity: root.intro
         }
@@ -1221,9 +1240,9 @@ Item {
                 : root.rightWing === 3 ? String(Math.round(shown / 10) * 10)
                 : root.rightWing === 4 ? root.fmtSession(root.sessionSec)
                 : ("+" + root.peakGAcc.toFixed(1) + " \u2212" + root.peakGBrk.toFixed(1))
-            color: root.bestFlash > 0.03 ? root.lotusGreen
-                 : (root.rightWing === 0 && root.accState === 2) ? root.accent
-                 : (root.rightWing === 1 && !root.selfTest && root.fuelLevel < root.fuelLow) ? "#ff5050" : "#dbeee4"
+            color: root.bestFlash > 0.03 ? root.greenInk
+                 : (root.rightWing === 0 && root.accState === 2) ? root.accentInk
+                 : (root.rightWing === 1 && !root.selfTest && root.fuelLevel < root.fuelLow) ? "#ff5050" : root.fg2
             scale: 1 + 0.16 * root.bestFlash
             font.family: root.menuFont; font.bold: true; font.pixelSize: root.rightWing === 5 ? 25 : 34
             // fixed-width slot between the shield and the side box: anything too
@@ -1275,25 +1294,25 @@ Item {
                 }
                 Rectangle {   // accent spine on the outer edge
                     x: cell.isRight ? parent.width - 5 : 1; y: 12; width: 4; height: parent.height - 24
-                    color: cell.warn ? "#ff4a4a" : root.accent
+                    color: cell.warn ? "#ff4a4a" : root.accentInk
                 }
                 Text {   // label
                     text: root.gaugeLabel(modelData.kind) + (cell.coldTag ? "  COLD" : "")
-                    color: cell.warn ? "#ff7777" : (cell.coldTag ? "#5ab0ff" : root.accent)
+                    color: cell.warn ? root.redSoft : (cell.coldTag ? (root.light ? "#1565c0" : "#5ab0ff") : root.accentInk)
                     font.family: root.menuFont; font.bold: true; font.pixelSize: 13; font.letterSpacing: 1
                     x: cell.isRight ? (parent.width - 16 - width) : 16; y: 7
                 }
                 Text {   // value
                     id: gVal
                     text: cell.valStr
-                    color: cell.warn ? "#ff5050" : "#ffffff"
+                    color: cell.warn ? "#ff5050" : root.fg
                     font.family: root.menuFont; font.bold: true; font.pixelSize: 34
                     x: cell.isRight ? (gUnit.visible ? (gUnit.x - width - 6) : (parent.width - 16 - width)) : 16; y: 22
                 }
                 Text {   // unit
                     id: gUnit
                     visible: cell.unitStr !== ""
-                    text: cell.unitStr; color: "#8fb5a3"
+                    text: cell.unitStr; color: root.fgDim
                     font.family: root.menuFont; font.bold: true; font.pixelSize: 14
                     x: cell.isRight ? (parent.width - 16 - width) : (gVal.x + gVal.width + 8); y: 42
                 }
@@ -1343,7 +1362,7 @@ Item {
                 x: root.accelG >= 0 ? 400 : 400 - width
                 color: root.accelG >= 0 ? root.lotusGreen : "#ff3b30"
             }
-            Rectangle { x: 399; y: 346; width: 2; height: 11; color: "#dbeee4" }
+            Rectangle { x: 399; y: 346; width: 2; height: 11; color: root.fg2 }
         }
 
         // ===== critical warning banner (slides in from the left, holds, slides out) =====
@@ -1372,7 +1391,7 @@ Item {
             }
             Rectangle { x: root.peakX > 400 ? parent.width - 5 : 1; y: 12; width: 4; height: parent.height - 24; color: root.lotusGreen }
             Text {
-                text: "PEAK"; color: root.accent
+                text: "PEAK"; color: root.accentInk
                 font.family: root.menuFont; font.bold: true; font.pixelSize: 13; font.letterSpacing: 1
                 x: 16; y: 7
             }
@@ -1383,13 +1402,13 @@ Item {
                     delegate: Item {
                         width: 148; height: root.peakRowH
                         Text {
-                            text: modelData.label; color: "#8fb5a3"
+                            text: modelData.label; color: root.fgDim
                             font.family: root.menuFont; font.bold: true; font.pixelSize: root.peakFont
                             anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
                             width: 60; fontSizeMode: Text.HorizontalFit; minimumPixelSize: 8
                         }
                         Text {
-                            text: modelData.text; color: "#ffffff"
+                            text: modelData.text; color: root.fg
                             font.family: root.menuFont; font.bold: true; font.pixelSize: root.peakFont
                             anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
                             horizontalAlignment: Text.AlignRight; width: 84
@@ -1404,7 +1423,7 @@ Item {
         Item {
             id: bat
             property bool  warn: root.batteryShown < root.batteryLow || root.batteryShown > root.batteryHigh
-            property color col:  (!root.selfTest && warn) ? "#ff5050" : root.accent
+            property color col:  (!root.selfTest && warn) ? "#ff5050" : root.accentInk
             readonly property real realLvl: Math.max(0, Math.min(1, (root.batteryShown - root.batteryLow)
                                  / Math.max(0.1, root.batteryHigh - root.batteryLow)))
             property real  lvl:  root.selfTest ? (root.sweepFrac * (1 - root.settle) + realLvl * root.settle) : realLvl
@@ -1415,7 +1434,7 @@ Item {
             Text {
                 id: vText
                 text: root.batteryShown.toFixed(1) + "V"
-                color: (!root.selfTest && bat.warn) ? "#ff7777" : "#ffffff"
+                color: (!root.selfTest && bat.warn) ? root.redSoft : root.fg
                 font.family: root.menuFont; font.bold: true; font.italic: true; font.pixelSize: 28
                 x: 62; y: 387 - height / 2 - 3
             }
@@ -1450,12 +1469,12 @@ Item {
         //       hidden, move up into the freed button space (right-aligned) =====
         Text {
             text: "ODO " + Math.round(root.odometer * root.distFactor) + root.distUnit
-            color: "#c4dccf"; font.family: root.menuFont; font.bold: true; font.pixelSize: 13
+            color: root.fg2; font.family: root.menuFont; font.bold: true; font.pixelSize: 13
             x: 782 - width; y: (root.showModeButtons ? 457 : 424) - height / 2 - 1
         }
         Text {
             text: "TRIP " + Math.round(root.tripmeter * root.distFactor) + root.distUnit
-            color: "#c4dccf"; font.family: root.menuFont; font.bold: true; font.pixelSize: 13
+            color: root.fg2; font.family: root.menuFont; font.bold: true; font.pixelSize: 13
             x: 782 - width; y: (root.showModeButtons ? 471 : 438) - height / 2 - 1
         }
     }
@@ -1481,7 +1500,7 @@ Item {
     Image {   // fuel pump icon: white (fuel.png) normally, red warning
               // (fuel_level_warning.png) once the level drops below FUEL LOW
         source: root.fuelLevel < root.fuelLow ? "assets/fuel_level_warning.png"
-                                              : "assets/fuel.png"
+                                              : (root.light ? "assets/fuel_dark.png" : "assets/fuel.png")
         x: 590; y: 366 + 22 - height/2; height: 20
         fillMode: Image.PreserveAspectFit; smooth: true
         opacity: root.fuelLevel < root.fuelLow ? 1.0 : 0.85
@@ -1572,7 +1591,7 @@ Item {
         text: ""
         x: 28; y: 451
         width: 580; elide: Text.ElideRight
-        color: "#ffcf6b"                              // amber ECU message
+        color: root.light ? "#9a5f00" : "#ffcf6b"                              // amber ECU message
         font.family: root.menuFont; font.bold: true; font.pixelSize: 16
         Timer {
             id: canAsciiSettle
@@ -1645,9 +1664,9 @@ Item {
         Column {
             anchors.centerIn: parent; spacing: 0
             Text { text: "RACE"; anchors.horizontalCenter: parent.horizontalCenter
-                   color: root.tRace ? "#ff6666" : "#8fb5a3"; font.family: root.menuFont; font.bold: true; font.pixelSize: 13 }
+                   color: root.tRace ? "#ff6666" : root.fgDim; font.family: root.menuFont; font.bold: true; font.pixelSize: 13 }
             Text { text: "MODE"; anchors.horizontalCenter: parent.horizontalCenter
-                   color: root.tRace ? "#ff6666" : "#8fb5a3"; font.family: root.menuFont; font.pixelSize: 8 }
+                   color: root.tRace ? "#ff6666" : root.fgDim; font.family: root.menuFont; font.pixelSize: 8 }
         }
     }
 
@@ -1659,9 +1678,9 @@ Item {
         Column {
             anchors.centerIn: parent; spacing: 0
             Text { text: "SPORT"; anchors.horizontalCenter: parent.horizontalCenter
-                   color: root.tSport ? root.accent : "#8fb5a3"; font.family: root.menuFont; font.bold: true; font.pixelSize: 13 }
+                   color: root.tSport ? root.accent : root.fgDim; font.family: root.menuFont; font.bold: true; font.pixelSize: 13 }
             Text { text: "MODE"; anchors.horizontalCenter: parent.horizontalCenter
-                   color: root.tSport ? root.accent : "#8fb5a3"; font.family: root.menuFont; font.pixelSize: 8 }
+                   color: root.tSport ? root.accent : root.fgDim; font.family: root.menuFont; font.pixelSize: 8 }
         }
     }
 
@@ -1815,6 +1834,7 @@ Item {
         for (var fi = 0; fi < root.fxKeys.length; fi++) { var fk = root.fxKeys[fi]; root[fk] = pI(g(fk), root[fk] ? 1 : 0) !== 0; }
         root.launchRpm=pI(g("launchRpm"),root.launchRpm);
         root.bgRed=clamp(pI(g("bgRed"),root.bgRed),0,255); root.bgGreen=clamp(pI(g("bgGreen"),root.bgGreen),0,255); root.bgBlue=clamp(pI(g("bgBlue"),root.bgBlue),0,255);
+        root.theme=clamp(pI(g("theme"),root.theme),0,1);
         root.rightWing=clamp(pI(g("rightWing"),root.rightWing),0,6);
         root.greenFrom=pI(g("greenFrom"),root.greenFrom); root.yellowFrom=pI(g("yellowFrom"),root.yellowFrom); root.redFrom=pI(g("redFrom"),root.redFrom);
         return true;
@@ -1838,7 +1858,7 @@ Item {
             a.push("peakShowAfr=" + (root.peakShowAfr ? 1 : 0)); a.push("peakShowOilTemp=" + (root.peakShowOilTemp ? 1 : 0));
             a.push("peakShowOilPress=" + (root.peakShowOilPress ? 1 : 0)); a.push("peakShowCoolant=" + (root.peakShowCoolant ? 1 : 0));
             a.push("showModeButtons=" + (root.showModeButtons ? 1 : 0)); a.push("vShift=" + root.vShift);
-            a.push("bgRed=" + root.bgRed); a.push("bgGreen=" + root.bgGreen); a.push("bgBlue=" + root.bgBlue);
+            a.push("theme=" + root.theme); a.push("bgRed=" + root.bgRed); a.push("bgGreen=" + root.bgGreen); a.push("bgBlue=" + root.bgBlue);
             a.push("barColours=" + root.barColours); a.push("greenFrom=" + root.greenFrom);
             a.push("yellowFrom=" + root.yellowFrom); a.push("redFrom=" + root.redFrom);
             for (var fi = 0; fi < root.fxKeys.length; fi++) a.push(root.fxKeys[fi] + "=" + (root[root.fxKeys[fi]] ? 1 : 0));
@@ -1894,6 +1914,7 @@ Item {
         { k: "gfrom",  label: "GREEN FROM" },
         { k: "yfrom",  label: "YELLOW FROM" },
         { k: "rfrom",  label: "RED FROM" },
+        { k: "theme",  label: "THEME" },
         { k: "red",    label: "RED" },
         { k: "green",  label: "GREEN" },
         { k: "blue",   label: "BLUE" },
@@ -1978,12 +1999,13 @@ Item {
         fxShutdown: "When the engine stops, the gauges slide out and back in."
     })
     // toggles + exit aren't hold-to-ramp; everything else is.
-    readonly property var noRamp: ["bcol", "rwing", "speed", "dist", "cun", "otun", "opun", "asrc", "swap", "pkon", "pkpos", "pkrpm", "pkspd", "pkafr", "pkotm", "pkopr", "pkcol", "pkrst", "htn", "hsl", "mbtn", "exit"]
+    readonly property var noRamp: ["theme", "bcol", "rwing", "speed", "dist", "cun", "otun", "opun", "asrc", "swap", "pkon", "pkpos", "pkrpm", "pkspd", "pkafr", "pkotm", "pkopr", "pkcol", "pkrst", "htn", "hsl", "mbtn", "exit"]
     function isRampable(k) { return noRamp.indexOf(k) === -1 && !isFx(k); }
     function helpText(k) {
         if (isFx(k)) return fxHelp[k];
         switch (k) {
         case "bgr": case "bgg": case "bgb": return "Background tint (0-255): backdrop, panels and borders. Default 0/120/74 = Lotus green; 0/0/0 = carbon grey.";
+        case "theme": return "DARK: light text on a dark background. LIGHT: dark text on a near-white background (set BG to 255/255/255 for pure white).";
         case "lrpm": return "Centre of the launch target band (\u00B1300 rpm).";
         case "rwing": return "Readout right of the gear: 0-100 km/h (0-60 mph) timer, fuel %, max speed, max RPM, session timer, peak g, or off.";
         case "shift": return "RPM where the redline / shift lights begin.";
@@ -2038,6 +2060,7 @@ Item {
         switch (k) {
         case "lrpm":   root.launchRpm    = clamp(root.launchRpm + dir * 100, 2300, root.rpmmax - 300); break;
         case "rwing":  root.rightWing    = ((root.rightWing + dir) % 7 + 7) % 7; break;
+        case "theme":  root.theme        = root.theme === 0 ? 1 : 0; break;
         case "bgr":    root.bgRed        = clamp(root.bgRed   + dir * 5, 0, 255); break;
         case "bgg":    root.bgGreen      = clamp(root.bgGreen + dir * 5, 0, 255); break;
         case "bgb":    root.bgBlue       = clamp(root.bgBlue  + dir * 5, 0, 255); break;
@@ -2096,6 +2119,7 @@ Item {
         if (isFx(k)) return root[k] ? "ON" : "OFF";
         switch (k) {
         case "lrpm":   return String(root.launchRpm);
+        case "theme":  return root.theme === 1 ? "LIGHT" : "DARK";
         case "bgr":    return String(root.bgRed);
         case "bgg":    return String(root.bgGreen);
         case "bgb":    return String(root.bgBlue);
@@ -2230,11 +2254,11 @@ Item {
             radius: 16; color: root.bgS(0.15, 6); border.color: root.bgS(0.508, 29); border.width: 2
 
             Text {
-                text: "SETTINGS"; color: "#ffffff"
+                text: "SETTINGS"; color: root.fg
                 font.pixelSize: 24; font.bold: true; font.family: root.menuFont
                 anchors.horizontalCenter: parent.horizontalCenter; y: 12
             }
-            Rectangle { x: 24; y: 46; width: parent.width - 48; height: 3; color: root.accent }
+            Rectangle { x: 24; y: 46; width: parent.width - 48; height: 3; color: root.accentInk }
 
             // ----- LEFT: settings list -----
             ListView {
@@ -2256,18 +2280,18 @@ Item {
                     visible: !root.rowHidden(modelData.k)
                     property bool current: ListView.isCurrentItem
                     Rectangle { visible: row.current; x: 0; y: 3; width: parent.width - 30; height: menu.rowH - 6; radius: 7; color: root.accent; opacity: 0.26 }
-                    Rectangle { visible: row.current; x: 0; y: 3; width: 4; height: menu.rowH - 6; color: root.accent }
+                    Rectangle { visible: row.current; x: 0; y: 3; width: 4; height: menu.rowH - 6; color: root.accentInk }
                     Text {
                         text: modelData.label
                         x: 20; anchors.verticalCenter: parent.verticalCenter
-                        color: row.current ? "#ffffff" : "#8fb5a3"
+                        color: row.current ? root.fg : root.fgDim
                         font.pixelSize: 17; font.bold: true; font.family: root.menuFont
                     }
                     Text {
                         anchors.right: parent.right; anchors.rightMargin: 30
                         anchors.verticalCenter: parent.verticalCenter
                         text: { var r = root.settingsRev; return root.valueText(modelData.k); }
-                        color: row.current ? "#ffffff" : root.accent
+                        color: row.current ? root.fg : root.accentInk
                         font.pixelSize: 17; font.bold: true; font.family: root.menuFont
                     }
                 }
@@ -2276,13 +2300,13 @@ Item {
                 visible: menuList.contentHeight > menuList.height
                 x: 384; y: 60; width: 4; height: menu.visibleRows * menu.rowH
                 radius: 2; color: root.bgS(0.183, 18)
-                Rectangle { x: 0; width: 4; radius: 2; color: root.accent
+                Rectangle { x: 0; width: 4; radius: 2; color: root.accentInk
                     y: parent.height * menuList.visibleArea.yPosition
                     height: Math.max(24, parent.height * menuList.visibleArea.heightRatio) }
             }
 
             // ----- RIGHT: live preview of the running dash + per-row help -----
-            Text { x: 404; y: 55; text: "LIVE PREVIEW"; color: "#6f9483"
+            Text { x: 404; y: 55; text: "LIVE PREVIEW"; color: root.fgDim
                    font.pixelSize: 13; font.bold: true; font.family: root.menuFont }
             Rectangle {
                 x: 404; y: 74; width: 344; height: 206
@@ -2297,17 +2321,17 @@ Item {
             Text {   // per-row help
                 x: 404; y: 294; width: 344; wrapMode: Text.WordWrap
                 text: root.helpText(root.items[root.sel].k)
-                color: "#d6eadf"; font.pixelSize: 15; font.family: root.menuFont
+                color: root.fg2; font.pixelSize: 15; font.family: root.menuFont
             }
 
             Text {
                 text: "Default units:  km \u00B7 \u00B0C \u00B7 bar \u00B7 \u03BB"
-                color: "#6f9483"; font.pixelSize: 12; font.family: root.menuFont
+                color: root.fgDim; font.pixelSize: 12; font.family: root.menuFont
                 x: 24; y: parent.height - 46
             }
             Text {
                 text: "L / R  SELECT      U / D  CHANGE      EXIT + U  SAVE"
-                color: "#56776a"; font.pixelSize: 13; font.family: root.menuFont
+                color: root.fgDim; font.pixelSize: 13; font.family: root.menuFont
                 anchors.horizontalCenter: parent.horizontalCenter
                 y: parent.height - 26
             }
