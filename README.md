@@ -14,3 +14,5 @@ A Lotus-inspired race dash for the GARW IC7 (800x480, Qt 5.12), built on the GTD
 
 Install: copy the `HethelRace` folder to `/opt/IC7/library/` and reboot. Settings are stored in
 `screen_configs/hethelrace_config.txt`.
+
+<img width="759" height="458" alt="Screenshot 2026-11-16 at 08 43 02" src="https://github.com/user-attachments/assets/c4105cd7-d0d4-4759-a397-9c57fccb98e8" />
