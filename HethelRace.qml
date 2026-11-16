@@ -30,7 +30,8 @@
 **  Telltale icons are PNGs in assets/.
 **
 **  The accent (RED / GREEN / BLUE settings) defaults to Lotus yellow
-**  255/224/0; the green is fixed.
+**  255/224/0. The background tint (BG RED / GREEN / BLUE) defaults to Lotus
+**  green 0/120/74. The green used for bar fills and the rev-bar zone is fixed.
 **
 **     Up                  open the settings menu
 **     Left / Right        move between settings
@@ -61,7 +62,8 @@
 **  4. PERFORMANCE — Canvas is CPU-rasterised, the expensive path on the IC7.
 **     There is ONE canvas (`bg`), full-screen, painted ONCE: backdrop, hex
 **     weave, unlit rev-bar segments, scale numbers, gear shield. It repaints
-**     only when RPM LIMIT / the red start / HIDE TACH NUMS / the accent change.
+**     only when RPM LIMIT / the red start / HIDE TACH NUMS / the accent / the
+**     background tint change.
 **     EVERYTHING that moves is scene-graph geometry composited on the GPU:
 **       * rev bar  — a Repeater of rotated Rectangles (one per 100 rpm) lit by
 **                    the integer `litIndex`, so segment bindings re-evaluate
@@ -293,6 +295,21 @@ Item {
     property int  red:   255           // default 255/224/0 == Lotus yellow #ffe000
     property int  green: 224
     property int  blue:  0
+
+    // --- background tint: every dark background / panel / border shade is derived
+    //     from this colour (BG RED / GREEN / BLUE). Default 0/120/74 = Lotus green.
+    //     0/0/0 gives a neutral carbon-grey dash.
+    property int  bgRed:   0
+    property int  bgGreen: 120
+    property int  bgBlue:  74
+    // shade of the tint: channel = tint * k + lift (lift is a neutral grey floor)
+    function bgS(k, lift) { return "#" + hx(bgRed * k + lift) + hx(bgGreen * k + lift) + hx(bgBlue * k + lift); }
+    function bgA(k, lift, a) {      // same, as a CSS rgba() string for the Canvas
+        function c(v) { return Math.max(0, Math.min(255, Math.round(v))); }
+        return "rgba(" + c(bgRed * k + lift) + "," + c(bgGreen * k + lift) + "," + c(bgBlue * k + lift) + "," + Number(a).toFixed(3) + ")";
+    }
+    readonly property color bgPanel: Qt.rgba((bgRed * 0.158 + 7) / 255, (bgGreen * 0.158 + 7) / 255, (bgBlue * 0.158 + 7) / 255, 0.84)
+    readonly property int   bgKey: bgRed * 65536 + bgGreen * 256 + bgBlue
 
     // --- units ---
     property int  speedunits: 0        // 0 = km/h, 1 = mph
@@ -618,6 +635,7 @@ Item {
     onRpmmaxChanged:        bg.requestPaint()
     onHideTachNumsChanged:  bg.requestPaint()
     onAccentChanged:        bg.requestPaint()
+    onBgKeyChanged:         bg.requestPaint()
 
     property bool blinkOn: true          // shared 420 ms blink phase (warnings / shift flash)
 
@@ -820,11 +838,11 @@ Item {
 
         function drawBackdrop(ctx) {
             var g = ctx.createLinearGradient(0, 0, 0, height);
-            g.addColorStop(0.0, "#010504"); g.addColorStop(0.55, "#04120c"); g.addColorStop(1.0, "#010604");
+            g.addColorStop(0.0, root.bgS(0.033, 1)); g.addColorStop(0.55, root.bgS(0.117, 4)); g.addColorStop(1.0, root.bgS(0.042, 1));
             ctx.fillStyle = g; ctx.fillRect(0, 0, width, height);
             // deep-green glow behind the gear
             var rg = ctx.createRadialGradient(400, 205, 10, 400, 205, 330);
-            rg.addColorStop(0.0, "rgba(0,120,74,0.42)"); rg.addColorStop(1.0, "rgba(0,120,74,0)");
+            rg.addColorStop(0.0, root.bgA(1, 0, 0.42)); rg.addColorStop(1.0, root.bgA(1, 0, 0));
             ctx.fillStyle = rg; ctx.fillRect(0, 60, width, 310);
             // faint hexagon weave, fading out from the centre
             var R = 15, dx = R * Math.sqrt(3), dy = R * 1.5;
@@ -836,7 +854,7 @@ Item {
                     var dd = Math.sqrt((x - 400) * (x - 400) + (y - 215) * (y - 215) * 1.6);
                     var al = 0.20 * (1 - dd / 240);
                     if (al < 0.012) continue;
-                    ctx.strokeStyle = "rgba(60,190,130," + al.toFixed(3) + ")";
+                    ctx.strokeStyle = root.bgA(1.1, 60, al);
                     ctx.beginPath();
                     for (var k = 0; k < 6; k++) {
                         var a = (60 * k + 30) * Math.PI / 180;
@@ -847,10 +865,10 @@ Item {
                 }
             }
             // bottom bar
-            ctx.fillStyle = "#06170f"; ctx.fillRect(0, 366, width, 44);
-            ctx.fillStyle = "#1d5a43"; ctx.fillRect(0, 366, width, 2);
+            ctx.fillStyle = root.bgS(0.142, 6); ctx.fillRect(0, 366, width, 44);
+            ctx.fillStyle = root.bgS(0.508, 29); ctx.fillRect(0, 366, width, 2);
             ctx.fillStyle = root.accent; ctx.fillRect(330, 366, 140, 2);
-            ctx.fillStyle = "#0e3526"; ctx.fillRect(0, 408, width, 2);
+            ctx.fillStyle = root.bgS(0.325, 14); ctx.fillRect(0, 408, width, 2);
         }
 
         // unlit baseline segments, one per 100 rpm (the lit ones are scene-graph
@@ -864,13 +882,13 @@ Item {
                 ctx.save();
                 ctx.translate(root.arcCx + rm * Math.sin(th), root.arcCy - rm * Math.cos(th));
                 ctx.rotate(th);
-                ctx.fillStyle = redZone ? "#571a1a" : (major ? "#2c6b52" : "#143a2b");
+                ctx.fillStyle = redZone ? "#571a1a" : (major ? root.bgS(0.525, 44) : root.bgS(0.317, 20));
                 ctx.fillRect(-root.segW / 2, -(ro - ri) / 2, root.segW, ro - ri);
                 ctx.restore();
             }
             // hairline under the bar
             var a0 = (-90 - root.arcHalf) * Math.PI / 180, a1 = (-90 + root.arcHalf) * Math.PI / 180;
-            ctx.strokeStyle = "#1d5a43"; ctx.lineWidth = 2;
+            ctx.strokeStyle = root.bgS(0.508, 29); ctx.lineWidth = 2;
             ctx.beginPath(); ctx.arc(root.arcCx, root.arcCy, root.arcRi - 12, a0, a1); ctx.stroke();
         }
 
@@ -889,12 +907,12 @@ Item {
             // chamfered gear shield (centre 400,200)
             shield(ctx, 400, 200, 66, 62, 20);
             var g = ctx.createLinearGradient(0, 138, 0, 262);
-            g.addColorStop(0, "#0c2a1e"); g.addColorStop(1, "#030d09");
+            g.addColorStop(0, root.bgS(0.25, 12)); g.addColorStop(1, root.bgS(0.083, 3));
             ctx.fillStyle = g; ctx.fill();
             shield(ctx, 400, 200, 66, 62, 20); ctx.strokeStyle = root.accent; ctx.lineWidth = 2.5; ctx.stroke();
-            shield(ctx, 400, 200, 59, 55, 17); ctx.strokeStyle = "#1d5a43"; ctx.lineWidth = 1.5; ctx.stroke();
+            shield(ctx, 400, 200, 59, 55, 17); ctx.strokeStyle = root.bgS(0.508, 29); ctx.lineWidth = 1.5; ctx.stroke();
             // wings: hairline + three slashes each side, pointing at the shield
-            ctx.lineWidth = 2; ctx.strokeStyle = "#1d5a43";
+            ctx.lineWidth = 2; ctx.strokeStyle = root.bgS(0.508, 29);
             ctx.beginPath(); ctx.moveTo(200, 236); ctx.lineTo(296, 236); ctx.stroke();
             ctx.beginPath(); ctx.moveTo(504, 236); ctx.lineTo(600, 236); ctx.stroke();
             ctx.fillStyle = root.accent;
@@ -1089,10 +1107,10 @@ Item {
                     readonly property bool lit:  root.rpmShown >= root.rpmredline * (0.82 + 0.036 * pair)
                                                  || (root.inputs & bit) !== 0
                     width: 22; height: 10; radius: 5
-                    color: !lit ? "#10291f"
+                    color: !lit ? root.bgS(0.208, 16)
                          : (root.overrev ? (root.blinkOn ? "#ff2a2a" : "#3a0d0d")
                          : (pair < 2 ? root.lotusGreen : (pair < 4 ? "#ffe000" : "#ff2a2a")))
-                    border.width: 1; border.color: lit ? "#ffffff" : "#1d5a43"
+                    border.width: 1; border.color: lit ? "#ffffff" : root.bgS(0.508, 29)
                 }
             }
         }
@@ -1145,7 +1163,7 @@ Item {
             readonly property bool isRpm: root.placementSwap
             text: root.engineOff ? (isRpm ? "––––" : "–––")
                                  : (isRpm ? String(Math.round(root.rpmShown / 10) * 10) : String(root.speedShown))
-            color: root.engineOff ? "#3f6654"
+            color: root.engineOff ? root.bgS(0.325, 63)
                  : ((isRpm && root.overrev) ? (root.blinkOn ? "#ff4040" : "#ff8a8a") : "#ffffff")
             font.family: root.menuFont; font.bold: true; font.pixelSize: 58
             anchors.horizontalCenter: parent.horizontalCenter
@@ -1157,7 +1175,7 @@ Item {
                 : root.launchArmed ? (root.launchReady ? "READY" : (root.rpmShown < root.launchRpm ? "REV UP" : "TOO HIGH"))
                 : (bigNum.isRpm ? "RPM" : (root.speedunits === 0 ? "KM/H" : "MPH"))
             color: launchMsg ? ((root.launchFlash > 0.05 || root.launchReady) ? root.lotusGreen : "#ffffff")
-                             : (root.engineOff ? "#3f6654" : root.accent)
+                             : (root.engineOff ? root.bgS(0.325, 63) : root.accent)
             font.family: root.menuFont; font.bold: true; font.pixelSize: launchMsg ? 17 : 14
             font.letterSpacing: 3
             anchors.horizontalCenter: parent.horizontalCenter
@@ -1167,14 +1185,14 @@ Item {
         // ===== left wing: the secondary live readout (RPM by default) =====
         Text {
             text: bigNum.isRpm ? (root.speedunits === 0 ? "KM/H" : "MPH") : "RPM"
-            color: root.engineOff ? "#3f6654" : ((!bigNum.isRpm && root.overrev) ? "#ff5555" : root.accent)
+            color: root.engineOff ? root.bgS(0.325, 63) : ((!bigNum.isRpm && root.overrev) ? "#ff5555" : root.accent)
             font.family: root.menuFont; font.bold: true; font.pixelSize: 12; font.letterSpacing: 2
             x: 248 - width / 2; y: 168; opacity: root.intro
         }
         Text {
             text: root.engineOff ? (bigNum.isRpm ? "–––" : "––––")
                                  : (bigNum.isRpm ? String(root.speedShown) : String(Math.round(root.rpmShown / 10) * 10))
-            color: root.engineOff ? "#3f6654"
+            color: root.engineOff ? root.bgS(0.325, 63)
                  : ((!bigNum.isRpm && root.overrev) ? (root.blinkOn ? "#ff4040" : "#ff8a8a") : "#ffffff")
             font.family: root.menuFont; font.bold: true; font.pixelSize: 34
             x: 248 - width / 2; y: 183; opacity: root.intro
@@ -1246,8 +1264,8 @@ Item {
 
                 Rectangle {   // panel
                     anchors.fill: parent; radius: 6
-                    color: "#d6071a12"
-                    border.width: 2; border.color: cell.warn ? "#ff4a4a" : "#1d5a43"
+                    color: root.bgPanel
+                    border.width: 2; border.color: cell.warn ? "#ff4a4a" : root.bgS(0.508, 29)
                 }
                 Rectangle {   // red wash that pulses while a critical is active
                     anchors.fill: parent; radius: 6; color: "#ff2a2a"
@@ -1279,7 +1297,7 @@ Item {
                     font.family: root.menuFont; font.bold: true; font.pixelSize: 14
                     x: cell.isRight ? (parent.width - 16 - width) : (gVal.x + gVal.width + 8); y: 42
                 }
-                Rectangle { x: 16; y: 70; width: 144; height: 8; color: "#0f2c20" }  // bar track
+                Rectangle { x: 16; y: 70; width: 144; height: 8; color: root.bgS(0.242, 15) }  // bar track
                 Rectangle {   // bar fill (low..high): green in band, red out of band
                     x: 16; y: 70; height: 8
                     width: cell.frac > 0 ? Math.max(6, 144 * cell.frac) : 0
@@ -1288,7 +1306,7 @@ Item {
                 }
                 Repeater {   // notches at 25 / 50 / 75 %
                     model: 3
-                    Rectangle { x: 16 + 36 * (index + 1) - 1; y: 70; width: 2; height: 8; color: "#04120c" }
+                    Rectangle { x: 16 + 36 * (index + 1) - 1; y: 70; width: 2; height: 8; color: root.bgS(0.117, 4) }
                 }
             }
         }
@@ -1317,7 +1335,7 @@ Item {
         Item {
             visible: root.fxAccel && !root.selfTest
             opacity: root.intro
-            Rectangle { x: 300; y: 349; width: 200; height: 5; color: "#0f2c20" }
+            Rectangle { x: 300; y: 349; width: 200; height: 5; color: root.bgS(0.242, 15) }
             Rectangle {
                 y: 349; height: 5
                 width: Math.min(100, Math.abs(root.accelG) * 100)
@@ -1350,7 +1368,7 @@ Item {
             visible: root.showPeak && !root.selfTest    // self-test runs the gauge sweep in this slot; PEAK takes over after
             Rectangle {
                 anchors.fill: parent; radius: 6
-                color: "#d6071a12"; border.width: 2; border.color: "#1d5a43"
+                color: root.bgPanel; border.width: 2; border.color: root.bgS(0.508, 29)
             }
             Rectangle { x: root.peakX > 400 ? parent.width - 5 : 1; y: 12; width: 4; height: parent.height - 24; color: root.lotusGreen }
             Text {
@@ -1414,7 +1432,7 @@ Item {
         }
 
         // ===== fuel bar (bottom bar, right): 12 segments =====
-        Rectangle { x: 622; y: 378; width: 160; height: 20; color: "#0a2118" }   // track bg
+        Rectangle { x: 622; y: 378; width: 160; height: 20; color: root.bgS(0.192, 10) }   // track bg
         Repeater {
             model: 12
             delegate: Rectangle {
@@ -1422,7 +1440,7 @@ Item {
                 readonly property bool low: !root.selfTest && root.fuelLevel < root.fuelLow
                 color: (index < Math.round(root.fuelBarFrac * 12))
                        ? (low ? "#ff4444" : root.lotusGreen)
-                       : "#123526"
+                       : root.bgS(0.292, 18)
                 opacity: (low && !root.blinkOn && index < Math.round(root.fuelBarFrac * 12)) ? 0.45 : 1   // low fuel pulses
                 Behavior on opacity { NumberAnimation { duration: 260 } }
             }
@@ -1622,8 +1640,8 @@ Item {
     Rectangle {   // RACE MODE button
         x: 636; y: 414; width: 72; height: 32; radius: 5
         visible: root.showModeButtons
-        color: root.tRace ? "#2a1414" : "#08201a"
-        border.color: root.tRace ? "#ff5555" : "#1d5a43"; border.width: 1
+        color: root.tRace ? "#2a1414" : root.bgS(0.2, 8)
+        border.color: root.tRace ? "#ff5555" : root.bgS(0.508, 29); border.width: 1
         Column {
             anchors.centerIn: parent; spacing: 0
             Text { text: "RACE"; anchors.horizontalCenter: parent.horizontalCenter
@@ -1636,8 +1654,8 @@ Item {
     Rectangle {   // SPORT MODE button (inputsdata 0x1000000)
         x: 714; y: 414; width: 72; height: 32; radius: 5
         visible: root.showModeButtons
-        color: root.tSport ? "#2a2608" : "#08201a"
-        border.color: root.tSport ? root.accent : "#1d5a43"; border.width: 1
+        color: root.tSport ? "#2a2608" : root.bgS(0.2, 8)
+        border.color: root.tSport ? root.accent : root.bgS(0.508, 29); border.width: 1
         Column {
             anchors.centerIn: parent; spacing: 0
             Text { text: "SPORT"; anchors.horizontalCenter: parent.horizontalCenter
@@ -1796,6 +1814,7 @@ Item {
         root.barColours=clamp(pI(g("barColours"),root.barColours),0,2);
         for (var fi = 0; fi < root.fxKeys.length; fi++) { var fk = root.fxKeys[fi]; root[fk] = pI(g(fk), root[fk] ? 1 : 0) !== 0; }
         root.launchRpm=pI(g("launchRpm"),root.launchRpm);
+        root.bgRed=clamp(pI(g("bgRed"),root.bgRed),0,255); root.bgGreen=clamp(pI(g("bgGreen"),root.bgGreen),0,255); root.bgBlue=clamp(pI(g("bgBlue"),root.bgBlue),0,255);
         root.rightWing=clamp(pI(g("rightWing"),root.rightWing),0,6);
         root.greenFrom=pI(g("greenFrom"),root.greenFrom); root.yellowFrom=pI(g("yellowFrom"),root.yellowFrom); root.redFrom=pI(g("redFrom"),root.redFrom);
         return true;
@@ -1819,6 +1838,7 @@ Item {
             a.push("peakShowAfr=" + (root.peakShowAfr ? 1 : 0)); a.push("peakShowOilTemp=" + (root.peakShowOilTemp ? 1 : 0));
             a.push("peakShowOilPress=" + (root.peakShowOilPress ? 1 : 0)); a.push("peakShowCoolant=" + (root.peakShowCoolant ? 1 : 0));
             a.push("showModeButtons=" + (root.showModeButtons ? 1 : 0)); a.push("vShift=" + root.vShift);
+            a.push("bgRed=" + root.bgRed); a.push("bgGreen=" + root.bgGreen); a.push("bgBlue=" + root.bgBlue);
             a.push("barColours=" + root.barColours); a.push("greenFrom=" + root.greenFrom);
             a.push("yellowFrom=" + root.yellowFrom); a.push("redFrom=" + root.redFrom);
             for (var fi = 0; fi < root.fxKeys.length; fi++) a.push(root.fxKeys[fi] + "=" + (root[root.fxKeys[fi]] ? 1 : 0));
@@ -1877,6 +1897,9 @@ Item {
         { k: "red",    label: "RED" },
         { k: "green",  label: "GREEN" },
         { k: "blue",   label: "BLUE" },
+        { k: "bgr",    label: "BG RED" },
+        { k: "bgg",    label: "BG GREEN" },
+        { k: "bgb",    label: "BG BLUE" },
         { k: "speed",  label: "SPEED UNIT" },
         { k: "dist",   label: "DIST UNIT" },
         { k: "chi",    label: "COOLANT HIGH" },
@@ -1960,6 +1983,7 @@ Item {
     function helpText(k) {
         if (isFx(k)) return fxHelp[k];
         switch (k) {
+        case "bgr": case "bgg": case "bgb": return "Background tint (0-255): backdrop, panels and borders. Default 0/120/74 = Lotus green; 0/0/0 = carbon grey.";
         case "lrpm": return "Centre of the launch target band (\u00B1300 rpm).";
         case "rwing": return "Readout right of the gear: 0-100 km/h (0-60 mph) timer, fuel %, max speed, max RPM, session timer, peak g, or off.";
         case "shift": return "RPM where the redline / shift lights begin.";
@@ -2014,6 +2038,9 @@ Item {
         switch (k) {
         case "lrpm":   root.launchRpm    = clamp(root.launchRpm + dir * 100, 2300, root.rpmmax - 300); break;
         case "rwing":  root.rightWing    = ((root.rightWing + dir) % 7 + 7) % 7; break;
+        case "bgr":    root.bgRed        = clamp(root.bgRed   + dir * 5, 0, 255); break;
+        case "bgg":    root.bgGreen      = clamp(root.bgGreen + dir * 5, 0, 255); break;
+        case "bgb":    root.bgBlue       = clamp(root.bgBlue  + dir * 5, 0, 255); break;
         case "shift":  root.rpmredline   = clamp(root.rpmredline + dir * 100, 2000, root.rpmmax - 100); break;
         case "limit":  root.rpmmax       = clamp(root.rpmmax     + dir * 100, 4000, 12000); break;
         case "rdamp":  root.rpmDamp      = clamp(root.rpmDamp    + dir,        1,    10);    break;
@@ -2069,6 +2096,9 @@ Item {
         if (isFx(k)) return root[k] ? "ON" : "OFF";
         switch (k) {
         case "lrpm":   return String(root.launchRpm);
+        case "bgr":    return String(root.bgRed);
+        case "bgg":    return String(root.bgGreen);
+        case "bgb":    return String(root.bgBlue);
         case "rwing":  return (root.rightWing === 0 && root.speedunits === 0) ? "0-100 TIMER" : root.rightWingNames[root.rightWing];
         case "shift":  return String(root.rpmredline);
         case "limit":  return String(root.rpmmax);
@@ -2192,12 +2222,12 @@ Item {
         readonly property int visibleRows: 11
         readonly property int rowH: 30
 
-        Rectangle { anchors.fill: parent; color: "#010604"; opacity: 0.80 }   // dim the full-size dash behind
+        Rectangle { anchors.fill: parent; color: root.bgS(0.042, 1); opacity: 0.80 }   // dim the full-size dash behind
 
         Rectangle {
             id: panel
             width: 772; height: 452; anchors.centerIn: parent
-            radius: 16; color: "#061810"; border.color: "#1d5a43"; border.width: 2
+            radius: 16; color: root.bgS(0.15, 6); border.color: root.bgS(0.508, 29); border.width: 2
 
             Text {
                 text: "SETTINGS"; color: "#ffffff"
@@ -2245,7 +2275,7 @@ Item {
             Rectangle {   // scrollbar
                 visible: menuList.contentHeight > menuList.height
                 x: 384; y: 60; width: 4; height: menu.visibleRows * menu.rowH
-                radius: 2; color: "#12281f"
+                radius: 2; color: root.bgS(0.183, 18)
                 Rectangle { x: 0; width: 4; radius: 2; color: root.accent
                     y: parent.height * menuList.visibleArea.yPosition
                     height: Math.max(24, parent.height * menuList.visibleArea.heightRatio) }
@@ -2256,7 +2286,7 @@ Item {
                    font.pixelSize: 13; font.bold: true; font.family: root.menuFont }
             Rectangle {
                 x: 404; y: 74; width: 344; height: 206
-                color: "#020906"; border.color: "#1d5a43"; border.width: 1; radius: 6; clip: true
+                color: root.bgS(0.058, 2); border.color: root.bgS(0.508, 29); border.width: 1; radius: 6; clip: true
                 ShaderEffectSource {
                     anchors.fill: parent; anchors.margins: 1
                     sourceItem: dashView
