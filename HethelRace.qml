@@ -14,7 +14,8 @@
 **       pulses red at the shift point
 **     * SPEED big under the gear, live RPM on the left wing (RPM/SPEED SWAP
 **       flips them) and a selectable RIGHT WING slot: 0-60 timer, fuel %,
-**       max speed, max rpm, session timer, peak g or off
+**       max speed, max rpm, session timer, peak g, a logo image
+**       (assets/wing_logo.png — replace the placeholder with your own) or off
 **     * race animations, each with an FX: on/off row in the menu — sequential
 **       LED shift lights, edge shift strobe, gear roll,
 **       redline bloom, limiter stutter, launch band, accel/brake bar, speed
@@ -248,9 +249,9 @@ Item {
 
     // --- RIGHT WING: what the slot right of the gear shows ---
     //     0 = 0-100 km/h (0-60 mph) timer, 1 = fuel %, 2 = max speed, 3 = max rpm,
-    //     4 = session timer, 5 = peak g, 6 = off
+    //     4 = session timer, 5 = peak g, 6 = logo image (assets/wing_logo.png), 7 = off
     property int  rightWing: 0
-    readonly property var rightWingNames: ["0-60 TIMER", "FUEL %", "MAX SPEED", "MAX RPM", "SESSION", "PEAK G", "OFF"]
+    readonly property var rightWingNames: ["0-60 TIMER", "FUEL %", "MAX SPEED", "MAX RPM", "SESSION", "PEAK G", "LOGO", "OFF"]
 
     // 0-100 km/h (0-60 mph when SPEED UNIT is MPH) timer. Arms at a standstill,
     // starts when the car moves, stops at the target speed; the last time stays
@@ -1218,7 +1219,7 @@ Item {
         }
         // ===== right wing: selectable slot (RIGHT WING setting) =====
         Text {
-            visible: root.rightWing !== 6
+            visible: root.rightWing < 6
             text: root.rightWing === 0 ? (root.speedunits === 0 ? "0-100 KM/H" : "0-60 MPH")
                 : root.rightWing === 1 ? "FUEL"
                 : root.rightWing === 2 ? (root.speedunits === 0 ? "MAX KM/H" : "MAX MPH")
@@ -1230,7 +1231,7 @@ Item {
         }
         Text {
             id: maxVal
-            visible: root.rightWing !== 6
+            visible: root.rightWing < 6
             property real shown: root.maxTarget
             Behavior on shown { enabled: root.fxBest; NumberAnimation { duration: 380; easing.type: Easing.OutCubic } }   // count up
             text: root.rightWing === 0 ? (root.accState === 2 ? root.accNow.toFixed(1)
@@ -1251,6 +1252,18 @@ Item {
             fontSizeMode: Text.HorizontalFit; minimumPixelSize: 12
             height: 44; verticalAlignment: Text.AlignVCenter
             y: 181; opacity: root.intro
+        }
+
+        // RIGHT WING = LOGO: shows assets/wing_logo.png (your own image; a PNG with a
+        // transparent background works best). Scaled to fit a 108 x 84 box, aspect
+        // kept. Loaded only when the option is selected.
+        Image {
+            visible: root.rightWing === 6
+            source: root.rightWing === 6 ? "assets/wing_logo.png" : ""
+            x: 498; y: 147; width: 108; height: 84
+            fillMode: Image.PreserveAspectFit
+            smooth: true; mipmap: true; antialiasing: true
+            opacity: root.intro
         }
 
         // ===== four side gauges (chrome + content; slide in on power-up) =====
@@ -1835,7 +1848,7 @@ Item {
         root.launchRpm=pI(g("launchRpm"),root.launchRpm);
         root.bgRed=clamp(pI(g("bgRed"),root.bgRed),0,255); root.bgGreen=clamp(pI(g("bgGreen"),root.bgGreen),0,255); root.bgBlue=clamp(pI(g("bgBlue"),root.bgBlue),0,255);
         root.theme=clamp(pI(g("theme"),root.theme),0,1);
-        root.rightWing=clamp(pI(g("rightWing"),root.rightWing),0,6);
+        root.rightWing=clamp(pI(g("rightWing"),root.rightWing),0,7);
         root.greenFrom=pI(g("greenFrom"),root.greenFrom); root.yellowFrom=pI(g("yellowFrom"),root.yellowFrom); root.redFrom=pI(g("redFrom"),root.redFrom);
         return true;
     }
@@ -2007,7 +2020,7 @@ Item {
         case "bgr": case "bgg": case "bgb": return "Background tint (0-255): backdrop, panels and borders. Default 0/120/74 = Lotus green; 0/0/0 = carbon grey.";
         case "theme": return "DARK: light text on a dark background. LIGHT: dark text on a near-white background (set BG to 255/255/255 for pure white).";
         case "lrpm": return "Centre of the launch target band (\u00B1300 rpm).";
-        case "rwing": return "Readout right of the gear: 0-100 km/h (0-60 mph) timer, fuel %, max speed, max RPM, session timer, peak g, or off.";
+        case "rwing": return "Readout right of the gear: 0-100 km/h (0-60 mph) timer, fuel %, max speed, max RPM, session timer, peak g, a logo image (assets/wing_logo.png), or off.";
         case "shift": return "RPM where the redline / shift lights begin.";
         case "limit": return "Full-scale RPM at the top of the tach sweep.";
         case "rdamp": return "Needle smoothing (1 = sharp \u2192 10 = smooth).";
@@ -2059,7 +2072,7 @@ Item {
         if (isFx(k)) { root[k] = !root[k]; root.settingsRev += 1; return; }
         switch (k) {
         case "lrpm":   root.launchRpm    = clamp(root.launchRpm + dir * 100, 2300, root.rpmmax - 300); break;
-        case "rwing":  root.rightWing    = ((root.rightWing + dir) % 7 + 7) % 7; break;
+        case "rwing":  root.rightWing    = ((root.rightWing + dir) % 8 + 8) % 8; break;
         case "theme":  root.theme        = root.theme === 0 ? 1 : 0; break;
         case "bgr":    root.bgRed        = clamp(root.bgRed   + dir * 5, 0, 255); break;
         case "bgg":    root.bgGreen      = clamp(root.bgGreen + dir * 5, 0, 255); break;
