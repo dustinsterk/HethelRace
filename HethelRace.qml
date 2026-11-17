@@ -251,6 +251,10 @@ Item {
     //     0 = 0-100 km/h (0-60 mph) timer, 1 = fuel %, 2 = max speed, 3 = max rpm,
     //     4 = session timer, 5 = peak g, 6 = logo image (assets/wing_logo.png), 7 = off
     property int  rightWing: 0
+    // LOGO TINT: recolour the logo image so single-colour artwork stays visible on
+    // either theme. 0 = OFF (image as supplied), 1 = THEME (text colour: white on
+    // DARK, near-black on LIGHT), 2 = ACCENT. Uses the image's transparency only.
+    property int  logoTint: 0
     readonly property var rightWingNames: ["0-60 TIMER", "FUEL %", "MAX SPEED", "MAX RPM", "SESSION", "PEAK G", "LOGO", "OFF"]
 
     // 0-100 km/h (0-60 mph when SPEED UNIT is MPH) timer. Arms at a standstill,
@@ -1255,15 +1259,33 @@ Item {
         }
 
         // RIGHT WING = LOGO: shows assets/wing_logo.png (your own image; a PNG with a
-        // transparent background works best). Scaled to fit a 108 x 84 box, aspect
+        // transparent background works best). Scaled to fit a 136 x 86 box, aspect
         // kept. Loaded only when the option is selected.
         Image {
-            visible: root.rightWing === 6
+            id: wingLogo
+            visible: root.rightWing === 6 && root.logoTint === 0
             source: root.rightWing === 6 ? "assets/wing_logo.png" : ""
-            x: 498; y: 147; width: 108; height: 84
+            x: 472; y: 146; width: 136; height: 86      // full width between the gear shield and the side box
             fillMode: Image.PreserveAspectFit
             smooth: true; mipmap: true; antialiasing: true
             opacity: root.intro
+        }
+        ShaderEffect {   // tinted copy: the image's alpha filled with one colour (core QtQuick, no GraphicalEffects)
+            visible: root.rightWing === 6 && root.logoTint !== 0 && wingLogo.status === Image.Ready
+            width: wingLogo.paintedWidth; height: wingLogo.paintedHeight
+            x: wingLogo.x + (wingLogo.width - width) / 2; y: wingLogo.y + (wingLogo.height - height) / 2
+            opacity: root.intro
+            property variant src: wingLogo
+            property color tint: root.logoTint === 2 ? root.accent : root.fg
+            fragmentShader: "
+                varying highp vec2 qt_TexCoord0;
+                uniform sampler2D src;
+                uniform lowp vec4 tint;
+                uniform lowp float qt_Opacity;
+                void main() {
+                    lowp float a = texture2D(src, qt_TexCoord0).a;
+                    gl_FragColor = vec4(tint.rgb * a, a) * qt_Opacity;
+                }"
         }
 
         // ===== four side gauges (chrome + content; slide in on power-up) =====
@@ -1848,6 +1870,7 @@ Item {
         root.launchRpm=pI(g("launchRpm"),root.launchRpm);
         root.bgRed=clamp(pI(g("bgRed"),root.bgRed),0,255); root.bgGreen=clamp(pI(g("bgGreen"),root.bgGreen),0,255); root.bgBlue=clamp(pI(g("bgBlue"),root.bgBlue),0,255);
         root.theme=clamp(pI(g("theme"),root.theme),0,1);
+        root.logoTint=clamp(pI(g("logoTint"),root.logoTint),0,2);
         root.rightWing=clamp(pI(g("rightWing"),root.rightWing),0,7);
         root.greenFrom=pI(g("greenFrom"),root.greenFrom); root.yellowFrom=pI(g("yellowFrom"),root.yellowFrom); root.redFrom=pI(g("redFrom"),root.redFrom);
         return true;
@@ -1875,7 +1898,7 @@ Item {
             a.push("barColours=" + root.barColours); a.push("greenFrom=" + root.greenFrom);
             a.push("yellowFrom=" + root.yellowFrom); a.push("redFrom=" + root.redFrom);
             for (var fi = 0; fi < root.fxKeys.length; fi++) a.push(root.fxKeys[fi] + "=" + (root[root.fxKeys[fi]] ? 1 : 0));
-            a.push("launchRpm=" + root.launchRpm); a.push("rightWing=" + root.rightWing);
+            a.push("launchRpm=" + root.launchRpm); a.push("rightWing=" + root.rightWing); a.push("logoTint=" + root.logoTint);
             cfg.open(); cfg.writetoopenfile(a.join("\n") + "\n"); cfg.close();
         } catch (e) { console.log("HethelRace: could not write config (" + e + ")"); }
     }
@@ -1956,6 +1979,7 @@ Item {
         { k: "night",  label: "NIGHTLIGHT" },
         { k: "swap",   label: "RPM/SPEED SWAP" },
         { k: "rwing",  label: "RIGHT WING" },
+        { k: "ltint",  label: "LOGO TINT" },
         { k: "pkon",   label: "SHOW PEAK GAUGE" },
         { k: "pkpos",  label: "PEAK POSITION" },
         { k: "pkrpm",  label: "PEAK: RPM" },
@@ -1994,7 +2018,8 @@ Item {
     readonly property var zoneItemKeys: ["gfrom","yfrom","rfrom"]
     function rowHidden(k) { return (!showPeakGauge && peakItemKeys.indexOf(k) !== -1)
                                 || (barColours !== 1 && zoneItemKeys.indexOf(k) !== -1)
-                                || (!fxLaunch && k === "lrpm"); }
+                                || (!fxLaunch && k === "lrpm")
+                                || (rightWing !== 6 && k === "ltint"); }
     function isFx(k) { return k.indexOf("fx") === 0; }
     readonly property var fxHelp: ({
         fxSeq:      "12 LEDs fill from both ends to the centre from 82% of SHIFT RPM, then flash. Off = the three rings.",
@@ -2012,13 +2037,14 @@ Item {
         fxShutdown: "When the engine stops, the gauges slide out and back in."
     })
     // toggles + exit aren't hold-to-ramp; everything else is.
-    readonly property var noRamp: ["theme", "bcol", "rwing", "speed", "dist", "cun", "otun", "opun", "asrc", "swap", "pkon", "pkpos", "pkrpm", "pkspd", "pkafr", "pkotm", "pkopr", "pkcol", "pkrst", "htn", "hsl", "mbtn", "exit"]
+    readonly property var noRamp: ["ltint", "theme", "bcol", "rwing", "speed", "dist", "cun", "otun", "opun", "asrc", "swap", "pkon", "pkpos", "pkrpm", "pkspd", "pkafr", "pkotm", "pkopr", "pkcol", "pkrst", "htn", "hsl", "mbtn", "exit"]
     function isRampable(k) { return noRamp.indexOf(k) === -1 && !isFx(k); }
     function helpText(k) {
         if (isFx(k)) return fxHelp[k];
         switch (k) {
         case "bgr": case "bgg": case "bgb": return "Background tint (0-255): backdrop, panels and borders. Default 0/120/74 = Lotus green; 0/0/0 = carbon grey.";
         case "theme": return "DARK: light text on a dark background. LIGHT: dark text on a near-white background (set BG to 255/255/255 for pure white).";
+        case "ltint": return "Recolour the logo: OFF = as supplied, THEME = text colour (white on DARK, black on LIGHT), ACCENT = accent colour. For single-colour logos.";
         case "lrpm": return "Centre of the launch target band (\u00B1300 rpm).";
         case "rwing": return "Readout right of the gear: 0-100 km/h (0-60 mph) timer, fuel %, max speed, max RPM, session timer, peak g, a logo image (assets/wing_logo.png), or off.";
         case "shift": return "RPM where the redline / shift lights begin.";
@@ -2074,6 +2100,7 @@ Item {
         case "lrpm":   root.launchRpm    = clamp(root.launchRpm + dir * 100, 2300, root.rpmmax - 300); break;
         case "rwing":  root.rightWing    = ((root.rightWing + dir) % 8 + 8) % 8; break;
         case "theme":  root.theme        = root.theme === 0 ? 1 : 0; break;
+        case "ltint":  root.logoTint     = ((root.logoTint + dir) % 3 + 3) % 3; break;
         case "bgr":    root.bgRed        = clamp(root.bgRed   + dir * 5, 0, 255); break;
         case "bgg":    root.bgGreen      = clamp(root.bgGreen + dir * 5, 0, 255); break;
         case "bgb":    root.bgBlue       = clamp(root.bgBlue  + dir * 5, 0, 255); break;
@@ -2133,6 +2160,7 @@ Item {
         switch (k) {
         case "lrpm":   return String(root.launchRpm);
         case "theme":  return root.theme === 1 ? "LIGHT" : "DARK";
+        case "ltint":  return root.logoTint === 1 ? "THEME" : root.logoTint === 2 ? "ACCENT" : "OFF";
         case "bgr":    return String(root.bgRed);
         case "bgg":    return String(root.bgGreen);
         case "bgb":    return String(root.bgBlue);
