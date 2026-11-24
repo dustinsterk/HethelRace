@@ -263,6 +263,21 @@ Item {
     // either theme. 0 = OFF (image as supplied), 1 = THEME (text color: white on
     // DARK, near-black on LIGHT), 2 = ACCENT. Uses the image's transparency only.
     property int  logoTint: 0
+    // LOGO FILE: which image the LOGO option shows. "" = assets/wing_logo.png;
+    // otherwise NAME selects assets/wing_logo_NAME.png. The choices are found by
+    // listing the assets folder (LogoList.qml, loaded only while LOGO is selected).
+    property string wingLogoName: ""
+    property bool   wingLogoMissing: false          // chosen file failed to load -> show the default
+    onWingLogoNameChanged: wingLogoMissing = false
+    readonly property string wingLogoFile: "assets/wing_logo" + ((wingLogoName !== "" && !wingLogoMissing) ? "_" + wingLogoName : "") + ".png"
+    Loader {
+        id: logoLister
+        active: root.rightWing === 6
+        source: "LogoList.qml"
+        onLoaded: item.folder = Qt.resolvedUrl("assets")
+        onStatusChanged: if (status === Loader.Error) console.log("HethelRace: logo list unavailable (Qt.labs.folderlistmodel missing?)")
+    }
+    readonly property var wingLogos: (logoLister.status === Loader.Ready && logoLister.item) ? logoLister.item.names : []
     readonly property var rightWingNames: ["0-60 TIMER", "FUEL %", "MAX SPEED", "MAX RPM", "SESSION", "PEAK G", "LOGO", "OFF"]
 
     // 0-100 km/h (0-60 mph when SPEED UNIT is MPH) timer. Arms at a standstill,
@@ -1425,7 +1440,11 @@ Item {
         Image {
             id: wingLogo
             visible: root.rightWing === 6 && root.logoTint === 0
-            source: root.rightWing === 6 ? "assets/wing_logo.png" : ""
+            source: root.rightWing === 6 ? root.wingLogoFile : ""
+            // chosen file missing / unreadable: fall back to the default image (deferred
+            // one tick, because changing the source from inside this handler would loop)
+            onStatusChanged: if (status === Image.Error && root.wingLogoName !== "" && !root.wingLogoMissing) logoFallback.restart()
+            Timer { id: logoFallback; interval: 0; repeat: false; onTriggered: root.wingLogoMissing = true }
             x: 472; y: 146; width: 136; height: 86      // full width between the gear shield and the side box
             fillMode: Image.PreserveAspectFit
             smooth: true; mipmap: true; antialiasing: true
@@ -1958,7 +1977,7 @@ Item {
         "rpmredline", "rpmmax", "rpmDamp",
         "barColors", "greenFrom", "yellowFrom", "redFrom",
         "theme", "neonFont", "menuGrid", "red", "green", "blue", "bgRed", "bgGreen", "bgBlue", "nightlight", "vShift",
-        "speedunits", "distunits", "placementSwap", "rightWing", "logoTint",
+        "speedunits", "distunits", "placementSwap", "rightWing", "wingLogoName", "logoTint",
         "hideTachNums", "hideShiftLights", "showModeButtons",
         "coolantHigh", "coolantLow", "tempunits", "fuelHigh", "fuelLow", "fuelDamp",
         "oilTempHigh", "oilTempLow", "oilTempUnits", "oilPressHigh", "oilPressLow", "oilPressUnits",
@@ -2000,6 +2019,7 @@ Item {
     }
     function applyCfg(k, v) {
         if (root.cfgKeys.indexOf(k) === -1 || v === undefined || v === null || v === "") return;
+        if (typeof root[k] === "string") { root[k] = String(v); return; }
         if (typeof root[k] === "boolean") root[k] = (v === true || v === 1 || v === "1" || v === "true");
         else { var n = Number(v); if (!isNaN(n)) root[k] = n; }
     }
@@ -2101,6 +2121,7 @@ Item {
         { name: "Layout", rows: [
             { k: "speed",  label: "Speed unit" },     { k: "dist",   label: "Dist unit" },
             { k: "swap",   label: "Rpm/speed swap" }, { k: "rwing",  label: "Right wing" },
+            { k: "lfile",  label: "Logo file" },
             { k: "ltint",  label: "Logo tint" },      { k: "htn",    label: "Hide tach nums" },
             { k: "hsl",    label: "Hide shift lights" }, { k: "mbtn", label: "Mode buttons" } ] },
         { name: "Coolant & fuel", rows: [
@@ -2142,7 +2163,7 @@ Item {
     function rowHidden(k) { return (!showPeakGauge && peakItemKeys.indexOf(k) !== -1)
                                 || (barColors !== 1 && zoneItemKeys.indexOf(k) !== -1)
                                 || (!fxLaunch && k === "lrpm")
-                                || (rightWing !== 6 && k === "ltint")
+                                || (rightWing !== 6 && (k === "ltint" || k === "lfile"))
                                 || (!sunset && k === "nfont"); }
     function isFx(k) { return k.indexOf("fx") === 0; }
     readonly property var fxHelp: ({
@@ -2161,7 +2182,7 @@ Item {
         fxShutdown: "When the engine stops, the gauges slide out and back in."
     })
     // toggles + exit aren't hold-to-ramp; everything else is.
-    readonly property var noRamp: ["mgrid", "nfont", "ltint", "theme", "bcol", "rwing", "speed", "dist", "cun", "otun", "opun", "asrc", "swap", "pkon", "pkpos", "pkrpm", "pkspd", "pkafr", "pkotm", "pkopr", "pkcol", "pkrst", "htn", "hsl", "mbtn", "exit"]
+    readonly property var noRamp: ["lfile", "mgrid", "nfont", "ltint", "theme", "bcol", "rwing", "speed", "dist", "cun", "otun", "opun", "asrc", "swap", "pkon", "pkpos", "pkrpm", "pkspd", "pkafr", "pkotm", "pkopr", "pkcol", "pkrst", "htn", "hsl", "mbtn", "exit"]
     function isRampable(k) { return noRamp.indexOf(k) === -1 && !isFx(k); }
     function helpText(k) {
         if (isFx(k)) return fxHelp[k];
@@ -2170,6 +2191,8 @@ Item {
         case "theme": return "DARK: light text on a dark background. LIGHT: dark text on near-white. SUNSET: neon dusk with palms. CITY MAP: night street map with card panels. Both use star shift lights, a red/blue shift strobe and fixed colors.";
         case "mgrid": return "Moving tile grid behind this settings screen. OFF = plain background (lighter on the graphics chip).";
         case "nfont": return "Use the Pricedown display font for the gear, numbers and labels in the SUNSET / CITY MAP themes. OFF = the standard font.";
+        case "lfile": return "Which image LOGO shows. DEFAULT = assets/wing_logo.png. Any PNG named wing_logo_NAME.png in the assets folder is listed here as NAME."
+                             + (logoLister.status === Loader.Error ? " (This unit cannot list files, so only DEFAULT is offered.)" : "");
         case "ltint": return "Recolor the logo: OFF = as supplied, THEME = text color (white on DARK, black on LIGHT), ACCENT = accent color. For single-color logos.";
         case "lrpm": return "Center of the launch target band (\u00B1300 rpm).";
         case "rwing": return "Readout right of the gear: 0-100 km/h (0-60 mph) timer, fuel %, max speed, max RPM, session timer, peak g, a logo image (assets/wing_logo.png), or off.";
@@ -2227,6 +2250,8 @@ Item {
         case "theme":  root.theme        = ((root.theme + dir) % 4 + 4) % 4; break;
         case "nfont":  root.neonFont     = !root.neonFont; break;
         case "mgrid":  root.menuGrid     = !root.menuGrid; break;
+        case "lfile":  { var ll = [""].concat(root.wingLogos), li = ll.indexOf(root.wingLogoName);
+                         root.wingLogoName = ll[((li < 0 ? 0 : li) + dir + ll.length) % ll.length]; } break;
         case "ltint":  root.logoTint     = ((root.logoTint + dir) % 3 + 3) % 3; break;
         case "bgr":    root.bgRed        = clamp(root.bgRed   + dir * 5, 0, 255); break;
         case "bgg":    root.bgGreen      = clamp(root.bgGreen + dir * 5, 0, 255); break;
@@ -2288,6 +2313,8 @@ Item {
         case "theme":  return root.theme === 1 ? "LIGHT" : (root.theme === 2 ? "SUNSET" : (root.theme === 3 ? "CITY MAP" : "DARK"));
         case "nfont":  return root.neonFont ? "ON" : "OFF";
         case "mgrid":  return root.menuGrid ? "ON" : "OFF";
+        case "lfile":  return root.wingLogoName === "" ? "DEFAULT"
+                            : (root.wingLogoName.length > 14 ? root.wingLogoName.substring(0, 13) + "\u2026" : root.wingLogoName);
         case "ltint":  return root.logoTint === 1 ? "THEME" : root.logoTint === 2 ? "ACCENT" : "OFF";
         case "bgr":    return String(root.bgRed);
         case "bgg":    return String(root.bgGreen);
@@ -2396,7 +2423,7 @@ Item {
         case "speed":                             return placementSwap ? [190, 160, 144, 72] : [296, 258, 208, 90];
         case "swap":                              return [190, 134, 316, 216];      // both readouts it swaps
         case "dist":                              return showModeButtons ? [636, 446, 156, 32] : [636, 412, 156, 34];
-        case "rwing": case "ltint": case "fxBest": return rw;
+        case "rwing": case "lfile": case "ltint": case "fxBest": return rw;
         case "mbtn":                              return [630, 409, 162, 42];
         case "chi": case "clo": case "cun":       return cool;
         case "fhi": case "flo": case "fdmp":      return [582, 370, 208, 36];
