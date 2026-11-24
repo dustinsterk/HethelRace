@@ -243,13 +243,13 @@ Item {
     property bool fxRoll:     true     // gear digit rolls up / down on a shift (off = pop)
     property bool fxBloom:    true     // glow widens in the red zone
     property bool fxLimiter:  true     // last segments stutter at RPM LIMIT
-    property bool fxLaunch:   true     // launch target band when stationary with revs up
+    property bool fxLaunch:   false     // launch target band when stationary with revs up
     property bool fxAccel:    true     // accel / brake bar under the big readout
     property bool fxStreaks:  true     // speed streaks in the wings
-    property bool fxBest:     true     // MAX readout flashes + counts up on a new best
-    property bool fxRace:     true     // RACE input: gauges shrink, gear + bar grow
+    property bool fxBest:     false     // MAX readout flashes + counts up on a new best
+    property bool fxRace:     false     // RACE input: gauges shrink, gear + bar grow
     property bool fxBanner:   true     // critical warning banner across the center
-    property bool fxCold:     true     // blue cold-oil rev ceiling on the bar
+    property bool fxCold:     false     // blue cold-oil rev ceiling on the bar
     property bool fxShutdown: true     // gauges slide out and back when the engine stops
     readonly property var fxKeys: ["fxSeq","fxEdge","fxRoll","fxBloom","fxLimiter","fxLaunch",
                                    "fxAccel","fxStreaks","fxBest","fxRace","fxBanner","fxCold","fxShutdown"]
