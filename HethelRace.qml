@@ -1,6 +1,8 @@
 /*****************************************************************************
 **  HethelRace.qml  —  Lotus-inspired race cluster for the GARW IC7
-**                     (SINGLE-FILE build, derived from the GTDash template)
+**                     (derived from the GTDash template; the settings menu lives
+**                     in SettingsMenu.qml / SettingBox.qml / Theme.qml /
+**                     MonoText.qml / GridBackground.qml, from the AgeSolo dash, MIT license)
 **
 **  Styling takes its cues from the Emira (Track-mode arched rev bar, big gear
 **  in a chamfered shield) and the Evora (yellow-on-green, driver-first layout):
@@ -8,9 +10,9 @@
 **     * an arched, wedge-shaped REV BAR across the top — green -> Lotus yellow
 **       -> red — with a white-hot leading edge, a fading comet tail when the
 **       revs drop, and a tell-tale marker that holds the peak of each rev.
-**       REV BAR COLOURS picks ZONES (GREEN / YELLOW / RED FROM rpm, as RaceX),
+**       REV BAR COLORS picks ZONES (GREEN / YELLOW / RED FROM rpm, as RaceX),
 **       BLEND or ACCENT
-**     * a large GEAR digit in the centre shield that "pops" on every shift and
+**     * a large GEAR digit in the center shield that "pops" on every shift and
 **       pulses red at the shift point
 **     * SPEED big under the gear, live RPM on the left wing (RPM/SPEED SWAP
 **       flips them) and a selectable RIGHT WING slot: 0-60 timer, fuel %,
@@ -21,12 +23,14 @@
 **       redline bloom, limiter stutter, launch band, accel/brake bar, speed
 **       streaks, new-best flash, RACE-mode takeover, critical warning banner,
 **       cold-oil rev ceiling, shutdown sweep
+**     * FX demo: selecting an FX row in the menu plays that effect in the live
+**       frame with simulated inputs
 **     * four side gauges (oil pressure / oil temp / AFR / coolant) that slide
 **       in on power-up and pulse red on an engine-damage critical
 **     * battery, fuel, telltales, ECU text line, ODO/TRIP and the optional
 **       RACE / SPORT buttons along the bottom
 **
-**  Gauge + settings menu in one component. Pure QtQuick 2 core (no
+**  Pure QtQuick 2 core (no
 **  QtGraphicalEffects / Controls) so it stays portable to the IC7's Qt 5.12.
 **  Telltale icons are PNGs in assets/.
 **
@@ -46,7 +50,8 @@
 **     up 0x20  down 0x2000  left 0x20000000  right 0x40000000
 **  While the menu is open, rpmtest.settings_on_offdata is set to 1.
 **
-**  Settings file: screen_configs/hethelrace_config.txt (key=value lines).
+**  Settings file: screen_configs/hethelrace_config.json (an older
+**  hethelrace_config.txt is imported once).
 **  Stored but with no visual effect: FUEL HIGH.
 **
 ** ===========================================================================
@@ -63,7 +68,7 @@
 **  3. CANVAS arcTo IS UNRELIABLE on the IC7's Qt 5.12 paint engine. This dash's
 **     canvas uses only moveTo/lineTo polygons, fillRect and plain arc().
 **
-**  4. PERFORMANCE — Canvas is CPU-rasterised, the expensive path on the IC7.
+**  4. PERFORMANCE — Canvas is CPU-rasterized, the expensive path on the IC7.
 **     There is ONE canvas (`bg`), full-screen, painted ONCE: backdrop, hex
 **     weave, unlit rev-bar segments, scale numbers, gear shield. It repaints
 **     only when RPM LIMIT / the red start / HIDE TACH NUMS / the accent / the
@@ -77,7 +82,7 @@
 **     warning becoming active). A steady-cruising dash animates nothing.
 **
 **  5. CONFIG FILE — IC7 FileIO quirks, handled in loadConfig/saveConfig:
-**     (a) READ is one-line-per-open (see rline()).
+**     (a) READ is one-line-per-open (see readLines()).
 **     (b) FileIO does NOT create the file on a read; seed defaults on first
 **         run with a SINGLE writetoopenfile() call.
 **
@@ -93,8 +98,8 @@ Item {
 
     // ---- data interface (real rpmtest field names, dot-notation) ----------
     property var d: (typeof rpmtest !== 'undefined') ? rpmtest : null
-    property real rpm:       d ? d.rpmdata          : 0
-    property real speed:     d ? d.speeddata        : 0      // km/h
+    property real rpm:       demoOn ? demoRpm : (d ? d.rpmdata : 0)
+    property real speed:     demoOn ? demoSpeed : (d ? d.speeddata : 0)      // km/h
     property real peakRpm:   0      // session high-water marks (PEAK card); in-memory,
     property real peakSpeed: 0      // km/h canonical -> reset on power cycle
     property real peakOilTemp:     -1e9   // session max, C canonical
@@ -103,8 +108,8 @@ Item {
     property real peakOilPressMin:  1e9   // session min, PSI canonical (low oil press = danger)
     property real peakAfrMax:      -1e9   // session max, AFR canonical (leanest)
     property real peakAfrMin:       1e9   // session min, AFR canonical (richest)
-    onSpeedChanged:     if (speed     > peakSpeed)   peakSpeed   = speed
-    onOiltempChanged:   if (oiltemp   > peakOilTemp) peakOilTemp = oiltemp
+    onSpeedChanged:     if (!demoOn && speed > peakSpeed)   peakSpeed   = speed
+    onOiltempChanged:   if (!demoOn && oiltemp > peakOilTemp) peakOilTemp = oiltemp
     onWatertempChanged: if (watertemp > peakCoolant) peakCoolant = watertemp
     onAfrChanged:       { if (afr > peakAfrMax) peakAfrMax = afr;
                           if (afr < peakAfrMin) peakAfrMin = afr; }
@@ -116,7 +121,7 @@ Item {
         peakGAcc = 0; peakGBrk = 0; accLast = 0; accBest = 0; maxPrev = 0;
         settingsRev += 1;
     }
-    property int  gearpos:   d ? d.geardata         : 0
+    property int  gearpos:   demoOn ? demoGear : (d ? d.geardata : 0)
     property real watertemp: d ? d.watertempdata    : 0      // °C
     property real fuel:      d ? d.fueldata         : 0      // 0..100 %
     property real odometer:  d ? (d.odometer0data    / 10) : 0   // tenths of km
@@ -126,7 +131,7 @@ Item {
     // it as a string or a NUL-terminated byte array; decode both. The raw read is
     // a binding so it stays reactive; absent in the sim -> "" (line stays hidden).
     // Read as a QML string so the host QByteArray/QString is coerced cleanly (the
-    // reference dash does the same). Then sanitise: keep printable ASCII up to the
+    // reference dash does the same). Then sanitize: keep printable ASCII up to the
     // first NUL and trim. This drops the stray control/padding bytes that render as
     // boxes ("[]") while a multi-frame ECU message is still streaming in.
     // ECU ASCII status text (CAN canasciidata), shown raw. Read as a QML string
@@ -146,7 +151,7 @@ Item {
         return root.canAsciiCollapse(out.trim());
     }
     // True if b is the same characters as a in a rotated order once spaces are
-    // removed (b is a rotation of a). Recognises a no-separator repeat that the
+    // removed (b is a rotation of a). Recognizes a no-separator repeat that the
     // collapse reordered ("7% Slip" vs "Slip7%", "LTC Off" vs "OffLTC") so the
     // display can hold the version already shown instead of flipping to the garble.
     function canAsciiSameRotation(a, b) {
@@ -200,13 +205,14 @@ Item {
         }
         return c.join(" ");
     }
-    property real oiltemp:   d ? d.oiltempdata      : 0      // °C (native)
-    property real oilpress:  d ? (d.oilpressuredata * 14.5038) : 0  // native BAR -> PSI (canonical)
+    property real oiltemp:   (demoOn && demoKey === "fxCold") ? demoOilT : (d ? d.oiltempdata : 0)      // °C (native)
+    property real oilpress:  demoOn ? 58 : (d ? (d.oilpressuredata * 14.5038) : 0)  // native BAR -> PSI (canonical)
     // Smoothed oil-pressure display: sweeps up from 0 as the engine builds
     // pressure on start (and eases down on shut-off) instead of snapping.
     property real oilPressShown: 0
     Behavior on oilPressShown { SmoothedAnimation { velocity: 60 } }   // ~PSI/sec
     onOilpressChanged: { oilPressShown = oilpress;
+                         if (demoOn) return;
                          if (oilpress > peakOilPressMax) peakOilPressMax = oilpress;
                          if (oilpress < peakOilPressMin) peakOilPressMin = oilpress; }
     property real afr:       d ? (d.o2data * 14.7)  : 0      // native lambda -> AFR (canonical, x14.7)
@@ -221,15 +227,15 @@ Item {
     property int  rpmmax:     9000     // RPM LIMIT  (full-scale rpm)
     property int  rpmDamp:    3        // RPM DAMPING (1 = snappy ... 10 = smooth)
 
-    // --- rev bar colours (as RaceX): ZONES = accent below GREEN FROM, then green,
+    // --- rev bar colors (as RaceX): ZONES = accent below GREEN FROM, then green,
     //     yellow from YELLOW FROM, red from RED FROM. BLEND = green fading into the
-    //     accent, red at SHIFT RPM. ACCENT = accent colour, red at SHIFT RPM.
-    property int  barColours: 1        // 0 = ACCENT, 1 = ZONES, 2 = BLEND
+    //     accent, red at SHIFT RPM. ACCENT = accent color, red at SHIFT RPM.
+    property int  barColors: 1        // 0 = ACCENT, 1 = ZONES, 2 = BLEND
     property int  greenFrom:  0        // rpm
     property int  yellowFrom: 6000     // rpm
     property int  redFrom:    7000     // rpm
     // rpm where the bar (and its scale numbers) turn red
-    readonly property int revRedStart: barColours === 1 ? redFrom : rpmredline
+    readonly property int revRedStart: barColors === 1 ? redFrom : rpmredline
 
     // --- race animations (each has an FX: row in the menu; all event-driven) ---
     property bool fxSeq:      true     // sequential LED shift lights (replace the three rings)
@@ -242,19 +248,19 @@ Item {
     property bool fxStreaks:  true     // speed streaks in the wings
     property bool fxBest:     true     // MAX readout flashes + counts up on a new best
     property bool fxRace:     true     // RACE input: gauges shrink, gear + bar grow
-    property bool fxBanner:   true     // critical warning banner across the centre
+    property bool fxBanner:   true     // critical warning banner across the center
     property bool fxCold:     true     // blue cold-oil rev ceiling on the bar
     property bool fxShutdown: true     // gauges slide out and back when the engine stops
     readonly property var fxKeys: ["fxSeq","fxEdge","fxRoll","fxBloom","fxLimiter","fxLaunch",
                                    "fxAccel","fxStreaks","fxBest","fxRace","fxBanner","fxCold","fxShutdown"]
-    property int  launchRpm:  4000     // LAUNCH RPM: centre of the launch target band (+/-300)
+    property int  launchRpm:  4000     // LAUNCH RPM: center of the launch target band (+/-300)
 
     // --- RIGHT WING: what the slot right of the gear shows ---
     //     0 = 0-100 km/h (0-60 mph) timer, 1 = fuel %, 2 = max speed, 3 = max rpm,
     //     4 = session timer, 5 = peak g, 6 = logo image (assets/wing_logo.png), 7 = off
     property int  rightWing: 0
-    // LOGO TINT: recolour the logo image so single-colour artwork stays visible on
-    // either theme. 0 = OFF (image as supplied), 1 = THEME (text colour: white on
+    // LOGO TINT: recolor the logo image so single-color artwork stays visible on
+    // either theme. 0 = OFF (image as supplied), 1 = THEME (text color: white on
     // DARK, near-black on LIGHT), 2 = ACCENT. Uses the image's transparency only.
     property int  logoTint: 0
     readonly property var rightWingNames: ["0-60 TIMER", "FUEL %", "MAX SPEED", "MAX RPM", "SESSION", "PEAK G", "LOGO", "OFF"]
@@ -269,7 +275,7 @@ Item {
     property real accLast: 0           // last completed run, s
     property real accBest: 0           // best run this session, s
     Timer {
-        interval: 50; repeat: true; running: root.rightWing === 0 && !root.selfTest
+        interval: 50; repeat: true; running: root.rightWing === 0 && !root.selfTest && !root.demoOn
         onTriggered: {
             var sp = root.speed, now = Date.now();
             if (root.accState === 2) {
@@ -287,7 +293,7 @@ Item {
 
     // session timer: engine-running time since power-on
     property int sessionSec: 0
-    Timer { interval: 1000; repeat: true; running: !root.engineOff && !root.selfTest; onTriggered: root.sessionSec += 1 }
+    Timer { interval: 1000; repeat: true; running: !root.engineOff && !root.selfTest && !root.demoOn; onTriggered: root.sessionSec += 1 }
     function fmtSession(t) {
         var m = Math.floor(t / 60), sec = t % 60;
         if (m < 100) return m + ":" + (sec < 10 ? "0" : "") + sec;                 // m:ss
@@ -297,16 +303,16 @@ Item {
     // peak g: hardest acceleration / braking this session (from the accel bar's g)
     property real peakGAcc: 0
     property real peakGBrk: 0
-    onAccelGChanged: { if (accelG > peakGAcc) peakGAcc = accelG; if (-accelG > peakGBrk) peakGBrk = -accelG; }
+    onAccelGChanged: { if (demoOn) return; if (accelG > peakGAcc) peakGAcc = accelG; if (-accelG > peakGBrk) peakGBrk = -accelG; }
 
-    // --- colour scheme: the accent is built from RGB ---
+    // --- color scheme: the accent is built from RGB ---
     property int  red:   255           // default 255/224/0 == Lotus yellow #ffe000
     property int  green: 224
     property int  blue:  0
 
     // --- background tint: every dark background / panel / border shade is derived
-    //     from this colour (BG RED / GREEN / BLUE). Default 0/120/74 = Lotus green.
-    //     0/0/0 gives a neutral carbon-grey dash.
+    //     from this color (BG RED / GREEN / BLUE). Default 0/120/74 = Lotus green.
+    //     0/0/0 gives a neutral carbon-gray dash.
     property int  bgRed:   0
     property int  bgGreen: 120
     property int  bgBlue:  74
@@ -331,12 +337,12 @@ Item {
     readonly property string accentInk: light ? ("#" + hx(aR * 0.55) + hx(aG * 0.55) + hx(aB * 0.55)) : accent   // accent for text + thin lines
     readonly property string greenInk:  light ? "#0c8a48" : lotusGreen
     readonly property string redSoft:   light ? "#c81414" : "#ff7777"
-    // shade of the tint. DARK: channel = tint * k + lift (lift = neutral grey floor).
+    // shade of the tint. DARK: channel = tint * k + lift (lift = neutral gray floor).
     // LIGHT: the same role mapped onto white — white pulled toward the tint by k,
     // then darkened a little so borders / panels stay visible on a white tint.
     function bgC(c, k, lift) { return light ? (255 - (255 - c) * k * 0.9 - lift * 0.6 - k * 60) : (c * k + lift); }
     function bgS(k, lift) { return "#" + hx(bgC(tR, k, lift)) + hx(bgC(tG, k, lift)) + hx(bgC(tB, k, lift)); }
-    function bgA(k, lift, a) {      // CSS rgba() string for the Canvas (centre glow: lift 0; hex weave: lift > 0)
+    function bgA(k, lift, a) {      // CSS rgba() string for the Canvas (center glow: lift 0; hex weave: lift > 0)
         function c(v) { return Math.max(0, Math.min(255, Math.round(v))); }
         if (light) {
             var m = lift > 0 ? 0.5 : 1.0, al = lift > 0 ? a * 1.5 : a * 0.45;
@@ -385,7 +391,7 @@ Item {
     readonly property bool showPeak:     showPeakGauge                       // PEAK card occupies a chosen corner slot
     property bool showPeakGauge:     false  // SHOW PEAK GAUGE menu toggle (default off)
     property int  peakGaugePosition: 1      // PEAK POSITION: 1=top-left 2=top-right 3=bottom-left 4=bottom-right
-    // which metrics the PEAK card lists (default RPM+SPEED = original behaviour)
+    // which metrics the PEAK card lists (default RPM+SPEED = original behavior)
     property bool peakShowRpm:      true
     property bool peakShowSpeed:    true
     property bool peakShowAfr:      false
@@ -415,7 +421,7 @@ Item {
     readonly property int peakFont: Math.max(9, Math.min(20, peakRowH - 2,
                                      Math.floor(84 / (peakMaxVal * 0.60)),
                                      Math.floor(58 / (peakMaxLab * 0.60))))
-    // vertically centre the list in the space under the PEAK header
+    // vertically center the list in the space under the PEAK header
     readonly property int peakColY: Math.round(25 + Math.max(0,
                                      (54 - (peakRows.length * peakRowH + Math.max(0, peakRows.length - 1))) / 2))
     function peakFmtTemp(c, units) {
@@ -446,7 +452,7 @@ Item {
     // --- display ---
     property int  nightlight: 0        // 0..100 night dimmer (0 = off)
 
-    // accent colour assembled from the RGB scheme (CSS hex for the Canvas)
+    // accent color assembled from the RGB scheme (CSS hex for the Canvas)
     function hx(n) { n = Math.max(0, Math.min(255, Math.round(n))); var s = n.toString(16); return (s.length < 2 ? "0" : "") + s; }
     readonly property string accent: "#" + hx(aR) + hx(aG) + hx(aB)
     // rpm-needle smoothing. The spring chases rpmDisplay toward the live rpm.
@@ -475,6 +481,7 @@ Item {
     // with a degree sign or lambda, icons, the menu rows) stays in DejaVu.
     FontLoader { id: uiFontD; source: "assets/pricedown.ttf" }
     property bool neonFont: true
+    property bool menuGrid: true       // MENU GRID: moving tile background behind the settings screen
     readonly property bool   dispOn:   sunset && neonFont && uiFontD.status === FontLoader.Ready
     readonly property string dispFont: dispOn ? uiFontD.name : menuFont
     readonly property bool   dispBold: !dispOn          // single-weight face: no synthetic bold
@@ -494,7 +501,7 @@ Item {
     }
 
     // ---- decoded telltales (inputsdata bits) ------------------------------
-    property bool tRace:     inputs & 0x800000
+    property bool tRace:     demoRace || (inputs & 0x800000)
     property bool tSport:    inputs & 0x1000000
     property bool tLeft:     inputs & 0x40
     property bool tRight:    inputs & 0x80
@@ -513,7 +520,7 @@ Item {
     // damping 0.55 settles fast with little overshoot (was 0.30 = bouncy/slow).
     readonly property real springDamp: 0.30 + springVal * 0.025   // paired to the stiffness: clean settle, ~no bounce across the range
     Behavior on rpmDisplay { SpringAnimation { spring: root.springVal; damping: root.springDamp; epsilon: 1 } }
-    onRpmChanged: { rpmDisplay = rpm; if (rpm > peakRpm) peakRpm = rpm; }
+    onRpmChanged: { rpmDisplay = rpm; if (!demoOn && rpm > peakRpm) peakRpm = rpm; engCheck(); }
 
     // ---- power-on self-test sweep ------------------------------------------
     //  On boot, sweep the tach 0 -> max -> 0 while every telltale and shift
@@ -544,7 +551,7 @@ Item {
     //  because the bar can only move so fast and the transient targets cancel.
     //  FUEL DAMP 0 = raw/instant; 1 = light (settles in ~1-2s) ... 9 = heavy
     //  (slow glide, ~8-10s, ignores transient slosh). fuelLevel is what every
-    //  fuel readout reads (bar fill, low-fuel colour, pump telltale).
+    //  fuel readout reads (bar fill, low-fuel color, pump telltale).
     readonly property real fuelVel: Math.max(8.0, 75.0 - (fuelDamp - 1) * 8.0)   // %/sec for damp 1..9
     property real fuelDisplay: 0
     Behavior on fuelDisplay { SmoothedAnimation { velocity: root.fuelVel } }
@@ -605,7 +612,7 @@ Item {
     // ---- derived ----------------------------------------------------------
     property bool overrev: rpmShown >= rpmredline    // crossed the shift value
     // engine off / key-on-engine-off: rpm sits at 0 (a running engine idles well
-    // above 0). Used to show a centred placeholder instead of a lone right-aligned
+    // above 0). Used to show a centerd placeholder instead of a lone right-aligned
     // "0", which looks lost in the fixed-width box until the car starts.
     property bool engineOff: !selfTest && Math.round(rpmShown) < 1
     // RPM / Speed placement: false (default) keeps RPM big on top with speed
@@ -641,7 +648,7 @@ Item {
     }
     function gaugeWarn(k) {
         if (k === "oiltemp")  return oiltemp  >= oilTempHigh;
-        if (k === "oilpress") return (!engineOff && oilPressShown <= oilPressLow) || oilPressShown >= oilPressHigh;
+        if (k === "oilpress") return (engRun && oilPressShown <= oilPressLow) || oilPressShown >= oilPressHigh;
         if (k === "afr")      { var l = afr / 14.7; return l < afrLow || l > afrHigh; }
         return watertemp >= coolantHigh;   // coolant
     }
@@ -685,10 +692,10 @@ Item {
     property bool blinkOn: true          // shared 420 ms blink phase (warnings / shift flash)
 
     // =======================================================================
-    //  HETHEL RACE visuals — shared geometry, colour and animation state
+    //  HETHEL RACE visuals — shared geometry, color and animation state
     // =======================================================================
     // ---- rev-bar arch geometry. The bar is a slice of a very large circle whose
-    //      centre sits far below the screen, so the segments fan along a shallow
+    //      center sits far below the screen, so the segments fan along a shallow
     //      arch across the top (Emira Track-mode style). Angles are degrees from
     //      vertical: -arcHalf (0 rpm, left) .. +arcHalf (RPM LIMIT, right).
     readonly property real arcCx:   400
@@ -706,21 +713,21 @@ Item {
 
     // ---- Lotus palette: the accent (RED/GREEN/BLUE settings) is the yellow; the
     //      green is fixed. The rev bar runs green -> yellow -> red.
-    readonly property string lotusGreen: sunset ? "#2ee6d6" : "#1fd071"     // bar-fill colour (teal in SUNSET)
+    readonly property string lotusGreen: sunset ? "#2ee6d6" : "#1fd071"     // bar-fill color (teal in SUNSET)
     function segColor(v) {
         var acc = Qt.rgba(aR / 255, aG / 255, aB / 255, 1);
-        // zone colours: Lotus green / yellow / red, or teal / orange / hot pink in SUNSET
+        // zone colors: Lotus green / yellow / red, or teal / orange / hot pink in SUNSET
         var zg = sunset ? [46, 230, 214] : [31, 208, 113];
         var zy = sunset ? [255, 176, 58] : [255, 224, 0];
         var zr = sunset ? [255, 45, 111] : [255, 41, 41];
-        if (barColours === 1) {                                    // ZONES
+        if (barColors === 1) {                                    // ZONES
             if (v >= redFrom)    return Qt.rgba(zr[0] / 255, zr[1] / 255, zr[2] / 255, 1);
             if (v >= yellowFrom) return Qt.rgba(zy[0] / 255, zy[1] / 255, zy[2] / 255, 1);
             if (v >= greenFrom)  return Qt.rgba(zg[0] / 255, zg[1] / 255, zg[2] / 255, 1);
             return acc;
         }
         if (v >= rpmredline) return Qt.rgba(zr[0] / 255, zr[1] / 255, zr[2] / 255, 1);
-        if (barColours === 0) return acc;                          // ACCENT
+        if (barColors === 0) return acc;                          // ACCENT
         var t = (v / Math.max(1, rpmredline) - 0.42) / 0.30;      // BLEND: green->accent over 42%..72% of SHIFT RPM
         t = Math.max(0, Math.min(1, t));
         return Qt.rgba((zg[0] + (aR - zg[0]) * t) / 255,
@@ -728,7 +735,7 @@ Item {
                        (zg[2] + (aB - zg[2]) * t) / 255, 1);
     }
 
-    // ---- power-on intro: side gauges slide in from the edges and the centre
+    // ---- power-on intro: side gauges slide in from the edges and the center
     //      fades up while the rev bar does its self-test sweep.
     property real intro: 0
     NumberAnimation { id: introAnim; target: root; property: "intro"; from: 0; to: 1; duration: 900; easing.type: Easing.OutCubic }
@@ -806,8 +813,8 @@ Item {
     Behavior on raceAmt { NumberAnimation { duration: 450; easing.type: Easing.OutCubic } }
 
     // ---- critical warning takeover: low oil pressure / coolant overtemp slide a
-    //      red banner across the centre (in, hold, out). The side box keeps pulsing.
-    readonly property bool critOil:  !selfTest && showOilPress && !engineOff && oilPressShown <= oilPressLow
+    //      red banner across the center (in, hold, out). The side box keeps pulsing.
+    readonly property bool critOil:  !selfTest && showOilPress && engRun && oilPressShown <= oilPressLow
     readonly property bool critCool: !selfTest && showCoolant && watertemp >= coolantHigh
     readonly property bool critAny:  critOil || critCool
     property real bannerX: -800
@@ -835,17 +842,24 @@ Item {
 
     // ---- shutdown sweep: when a running engine stops, everything slides / fades
     //      out (mirror of the power-on intro), then returns for key-on readings.
-    property bool wasRunning: false
+    // Triggered from the RAW rpm with hysteresis (running above 300, stopped below
+    // 50), so it fires at once and does not wait for the damped needle to reach 0.
+    property bool engRun: false
+    property bool engRunDemo: false        // "running" came from the FX demo's simulated rpm
+    function engCheck() {
+        if (rpm > 300) { if (!engRun) engRunDemo = demoOn; engRun = true; }
+        else if (rpm < 50 && engRun) {
+            engRun = false;
+            // a real stop, or the Shutdown sweep demo itself — never the end of another demo
+            var show = demoOn ? (demoKey === "fxShutdown") : !engRunDemo;
+            if (show && fxShutdown && !selfTest) shutdownAnim.restart();
+        }
+    }
     SequentialAnimation {
         id: shutdownAnim
         NumberAnimation { target: root; property: "intro"; to: 0; duration: 520; easing.type: Easing.InCubic }
         PauseAnimation  { duration: 500 }
         NumberAnimation { target: root; property: "intro"; to: 1; duration: 700; easing.type: Easing.OutCubic }
-    }
-    onEngineOffChanged: {
-        if (!engineOff) { wasRunning = true; return; }
-        if (wasRunning && fxShutdown && !selfTest) shutdownAnim.restart();
-        wasRunning = false;
     }
 
     // ---- rev tell-tale: a marker that rides the peak of each rev, holds for a
@@ -861,9 +875,33 @@ Item {
     NumberAnimation { id: tellFall; target: root; property: "rpmTell"; to: 0; duration: 1800; easing.type: Easing.InQuad }
 
     // ---- live dash view (wrapped so the settings page can show a preview) --
+    Rectangle { anchors.fill: parent; z: -3; color: root.bgS(0.042, 1) }   // settings-screen backdrop
+    // Moving tile grid behind the settings screen (GridBackground.qml, from the
+    // AgeSolo dash). A GPU shader that animates only while the menu is open; the
+    // MENU GRID setting turns it off (plain backdrop above).
+    GridBackground {
+        anchors.fill: parent
+        z: -2
+        opacity: (root.menuGrid && root.menuOpen) ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 420 } }
+        visible: opacity > 0
+        backColor:   root.bgS(0.058, 2)
+        backColor2:  root.bgS(0.033, 1)
+        tileColor:   root.bgS(0.292, 18)
+        tileColor2:  root.bgS(0.150, 6)
+        edgeColor:   root.bgS(1.1, 60)
+        accentColor: root.accent
+        tilt: 0.7
+    }
     Item {
         id: dashView
-        anchors.fill: parent
+        width: 800; height: 480
+        // 0 = full screen, 1 = shrunk into the settings frame (x 446, y 86, 43.5 %)
+        property real menuAmt: root.menuOpen ? 1 : 0
+        Behavior on menuAmt { NumberAnimation { duration: 420; easing.type: Easing.OutCubic } }
+        transformOrigin: Item.TopLeft
+        x: 446 * menuAmt; y: 86 * menuAmt
+        scale: 1 - 0.565 * menuAmt
         Item {
             id: dashShift
             anchors.fill: parent
@@ -879,10 +917,10 @@ Item {
         onPaint: {
             var ctx = getContext("2d");
             ctx.clearRect(0, 0, width, height);
-            drawBackdrop(ctx);       // green-black gradient, centre glow, hex weave, bottom bar
+            drawBackdrop(ctx);       // green-black gradient, center glow, hex weave, bottom bar
             drawArcStatic(ctx);      // unlit rev-bar segments + hairline
             drawArcNumbers(ctx);     // 1k scale labels under the bar
-            drawCentreStatic(ctx);   // gear shield + wings
+            drawCenterStatic(ctx);   // gear shield + wings
         }
 
         function drawBackdrop(ctx) {
@@ -894,7 +932,7 @@ Item {
             var rg = ctx.createRadialGradient(400, 205, 10, 400, 205, 330);
             rg.addColorStop(0.0, root.bgA(1, 0, 0.42)); rg.addColorStop(1.0, root.bgA(1, 0, 0));
             ctx.fillStyle = rg; ctx.fillRect(0, 60, width, 310);
-            // faint hexagon weave, fading out from the centre
+            // faint hexagon weave, fading out from the center
             var R = 15, dx = R * Math.sqrt(3), dy = R * 1.5;
             ctx.lineWidth = 1;
             for (var row = 0; row * dy < 250; row++) {
@@ -969,7 +1007,7 @@ Item {
             ctx.quadraticCurveTo(286, -200, 334, -40); ctx.quadraticCurveTo(372, 90, 310, 250); ctx.quadraticCurveTo(284, 380, 322, 520);
             ctx.lineTo(900, 520); ctx.lineTo(900, -500); ctx.closePath(); ctx.fill();
             ctx.restore();
-            // calm the centre so the readouts stay legible
+            // calm the center so the readouts stay legible
             var vg = ctx.createRadialGradient(400, 215, 30, 400, 215, 360);
             vg.addColorStop(0.0, "rgba(8,12,34,0.80)"); vg.addColorStop(0.55, "rgba(8,12,34,0.55)"); vg.addColorStop(1.0, "rgba(8,12,34,0.25)");
             ctx.fillStyle = vg; ctx.fillRect(0, 0, width, 366);
@@ -1025,8 +1063,8 @@ Item {
             }
         }
 
-        function drawCentreStatic(ctx) {
-            // chamfered gear shield (centre 400,200)
+        function drawCenterStatic(ctx) {
+            // chamfered gear shield (center 400,200)
             shield(ctx, 400, 200, 66, 62, 20);
             var g = ctx.createLinearGradient(0, 138, 0, 262);
             g.addColorStop(0, root.bgS(0.25, 12)); g.addColorStop(1, root.bgS(0.083, 3));
@@ -1186,7 +1224,7 @@ Item {
         id: readouts
         anchors.fill: parent
 
-        // ===== shift lights: top centre, above the crown of the rev bar. Each
+        // ===== shift lights: top center, above the crown of the rev bar. Each
         // lights by its inputsdata bit OR by rpm (90 / 95 / 100 % of SHIFT RPM);
         // past the shift point everything lit flashes.
         Row {
@@ -1214,7 +1252,7 @@ Item {
         }
 
         // ===== sequential shift lights (FX: SEQ SHIFT LIGHTS): 12 LEDs that fill
-        // from both ends toward the centre — green, yellow, red — from 82 % to
+        // from both ends toward the center — green, yellow, red — from 82 % to
         // 100 % of SHIFT RPM, then the whole row flashes. The three inputsdata
         // shift bits light the outer / middle / inner pairs as well.
         Row {
@@ -1224,7 +1262,7 @@ Item {
             Repeater {
                 model: 12
                 Rectangle {
-                    readonly property int  pair: index < 6 ? index : 11 - index          // 0 = outer ... 5 = centre
+                    readonly property int  pair: index < 6 ? index : 11 - index          // 0 = outer ... 5 = center
                     readonly property int  bit:  pair < 2 ? 0x80000 : (pair < 4 ? 0x100000 : 0x200000)
                     readonly property bool lit:  root.rpmShown >= root.rpmredline * (0.82 + 0.036 * pair)
                                                  || (root.inputs & bit) !== 0
@@ -1260,7 +1298,7 @@ Item {
             }
         }
 
-        // ===== gear, in the shield (centre 400,200) =====
+        // ===== gear, in the shield (center 400,200) =====
         Rectangle {   // accent flash behind the digit on a gear change
             x: 343; y: 146; width: 114; height: 108; radius: 12
             color: root.accent; opacity: root.gearFlash * 0.55
@@ -1393,7 +1431,7 @@ Item {
             smooth: true; mipmap: true; antialiasing: true
             opacity: root.intro
         }
-        ShaderEffect {   // tinted copy: the image's alpha filled with one colour (core QtQuick, no GraphicalEffects)
+        ShaderEffect {   // tinted copy: the image's alpha filled with one color (core QtQuick, no GraphicalEffects)
             visible: root.rightWing === 6 && root.logoTint !== 0 && wingLogo.status === Image.Ready
             width: wingLogo.paintedWidth; height: wingLogo.paintedHeight
             x: wingLogo.x + (wingLogo.width - width) / 2; y: wingLogo.y + (wingLogo.height - height) / 2
@@ -1433,7 +1471,7 @@ Item {
                 property bool   warn:    !root.selfTest && root.gaugeWarn(modelData.kind)
                 // engine-damage criticals flash (low oil pressure / coolant overtemp)
                 property bool   critical: !root.selfTest
-                                      && ((modelData.kind === "oilpress" && !root.engineOff && root.oilPressShown <= root.oilPressLow)
+                                      && ((modelData.kind === "oilpress" && root.engRun && root.oilPressShown <= root.oilPressLow)
                                        || (modelData.kind === "coolant"  && root.watertemp >= root.coolantHigh))
                 property real   frac:    root.selfTest ? (root.sweepFrac * (1 - root.settle) + root.gaugeFrac(modelData.kind) * root.settle) : root.gaugeFrac(modelData.kind)
                 property string valStr:  root.gaugeVal(modelData.kind)
@@ -1514,7 +1552,7 @@ Item {
             }
         }
 
-        // ===== accel / brake bar: centre-out, green right = accelerating, red left = braking =====
+        // ===== accel / brake bar: center-out, green right = accelerating, red left = braking =====
         Item {
             visible: root.fxAccel && !root.selfTest
             opacity: root.intro
@@ -1874,6 +1912,16 @@ Item {
             visible: opacity > 0.01
         }
     }
+    // ---- settings focus outline (drawn inside the dash so it shrinks with it; the
+    //      border is thick because the dash is shown at 43.5 % in the settings frame)
+    Rectangle {
+        visible: root.focusRect !== null
+        x: root.focusRect ? root.focusRect[0] : 0;     y: root.focusRect ? root.focusRect[1] : 0
+        width: root.focusRect ? root.focusRect[2] : 0; height: root.focusRect ? root.focusRect[3] : 0
+        color: "transparent"; radius: 10
+        border.width: 6; border.color: root.fg
+        opacity: root.focusPulse
+    }
     }   // end dashShift
         // ---- NIGHTLIGHT dimmer: inside dashView so the live preview shows it,
         //      but outside dashShift so V-SHIFT does not move it (full coverage)
@@ -1888,149 +1936,118 @@ Item {
     // =======================================================================
     //  SETTINGS — config file, D-pad, and the scrolling menu (single file)
     // =======================================================================
-    // Config location is resolved at startup (resolveCfgPath): some IC7 builds
-    // use /opt/Garw_IC7/..., others /opt/IC7/.... cfgPath holds the resolved path;
-    // cfgCandidates is the search order (first existing config wins; on a fresh
-    // unit the first directory that accepts a write wins).
-    property string cfgPath: "/opt/IC7/screen_configs/hethelrace_config.txt"
-    readonly property var cfgCandidates: [
-        "/opt/Garw_IC7/screen_configs/hethelrace_config.txt",
-        "/opt/IC7/screen_configs/hethelrace_config.txt"
-    ]
+    // Settings are one JSON file (as in the AgeSolo dash). Its folder is resolved at
+    // startup (resolveCfgDir): v4 firmware used /opt/Garw_IC7/..., v5+ /opt/IC7/....
+    // An older hethelrace_config.txt (key=value lines) in the same folder is
+    // imported once and then left alone.
+    property string cfgDir: "/opt/IC7/screen_configs/"
+    readonly property var cfgDirs: [ "/opt/Garw_IC7/screen_configs/", "/opt/IC7/screen_configs/" ]
     FileIO {
         id: cfg
-        // IC7 maps this to <dash>/screen_configs/hethelrace_config.txt.
-        source: root.cfgPath
+        source: root.cfgDir + "hethelrace_config.json"
         onError: console.log("HethelRace FileIO: " + msg)
     }
-
-
-    // config line order (one value per line). Keep load + save identical.
-    // Returns true if a usable config was read, false if missing/empty.
-    //
-    // IC7 FileIO READ CONTRACT (verified on hardware): the reader returns ONE
-    // line per open, and only the FIRST readopenfile() after each open works;
-    // the index selects the line. So to read line i you must:
-    //     openforreading(); var s = readopenfile(i); close();
-    // i.e. re-open before every single line. Reading several lines in one open
-    // returns only the first; that was the long-standing "won't read" bug.
-    function rline(i) {
-        var s = "";
-        try { cfg.openforreading(); s = cfg.readopenfile(i); cfg.close(); }
-        catch (e) { console.log("HethelRace: read line " + i + " failed (" + e + ")"); }
-        return s;
+    FileIO {
+        id: cfgOld
+        source: root.cfgDir + "hethelrace_config.txt"
+        onError: console.log("HethelRace FileIO (old config): " + msg)
     }
-    // Resolve cfgPath to the directory that exists on this unit (see cfgCandidates).
-    // Prefer a candidate that already holds a readable config; otherwise pick the
-    // first whose directory accepts a write (the write only sticks where the dir
-    // exists). Runs once at startup, before loadConfig.
-    function resolveCfgPath() {
-        var i, s;
-        for (i = 0; i < root.cfgCandidates.length; i++) {
-            root.cfgPath = root.cfgCandidates[i];
-            s = rline(0);
-            if (s !== "" && s !== undefined && s !== null) return;   // existing config here
-        }
-        for (i = 0; i < root.cfgCandidates.length; i++) {
-            root.cfgPath = root.cfgCandidates[i];
-            saveConfig();                                            // seed defaults
-            s = rline(0);
-            if (s !== "" && s !== undefined && s !== null) return;   // write stuck -> dir exists
-        }
-        root.cfgPath = root.cfgCandidates[root.cfgCandidates.length - 1];   // fallback
-    }
-    function loadConfig() {
-        function pI(s, def) { return (s !== "" && s !== undefined && s !== null) ? parseInt(s)   : def; }
-        function pF(s, def) { return (s !== "" && s !== undefined && s !== null) ? parseFloat(s) : def; }
-        // Config is "key=value" lines (any order, hand-editable). Read them into a
-        // map; if none are found, fall back to the old positional format once so an
-        // existing config migrates without losing settings (next save is key=value).
-        var map = {}; var any = false;
-        // IC7 FileIO is one-line-per-open (only the first readopenfile after each
-        // open returns its line), so read each line via rline() -- which re-opens
-        // per line -- instead of multiple reads inside one open. Reading in a single
-        // open only returns line 0 on the device, dropping every other setting.
-        for (var i = 0; i < 200; i++) {
-            var ln = rline(i);
+
+    // Every persisted setting, by property name (the JSON key is the same name).
+    readonly property var cfgKeys: [
+        "rpmredline", "rpmmax", "rpmDamp",
+        "barColors", "greenFrom", "yellowFrom", "redFrom",
+        "theme", "neonFont", "menuGrid", "red", "green", "blue", "bgRed", "bgGreen", "bgBlue", "nightlight", "vShift",
+        "speedunits", "distunits", "placementSwap", "rightWing", "logoTint",
+        "hideTachNums", "hideShiftLights", "showModeButtons",
+        "coolantHigh", "coolantLow", "tempunits", "fuelHigh", "fuelLow", "fuelDamp",
+        "oilTempHigh", "oilTempLow", "oilTempUnits", "oilPressHigh", "oilPressLow", "oilPressUnits",
+        "batteryHigh", "batteryLow", "afrHigh", "afrLow", "afrSource",
+        "showPeakGauge", "peakGaugePosition", "peakShowRpm", "peakShowSpeed", "peakShowAfr",
+        "peakShowOilTemp", "peakShowOilPress", "peakShowCoolant",
+        "fxSeq", "fxEdge", "fxRoll", "fxBloom", "fxLimiter", "fxLaunch", "launchRpm",
+        "fxAccel", "fxStreaks", "fxBest", "fxRace", "fxBanner", "fxCold", "fxShutdown"
+    ]
+
+    // IC7 FileIO READ CONTRACT (verified on hardware): the reader returns ONE line
+    // per open, and only the FIRST readopenfile() after each open works; the index
+    // selects the line. So re-open before every single line.
+    function readLines(f, maxLines) {
+        var out = [];
+        for (var i = 0; i < maxLines; i++) {
+            var ln = "";
+            try { f.openforreading(); ln = f.readopenfile(i); f.close(); }
+            catch (e) { console.log("HethelRace: read line " + i + " failed (" + e + ")"); }
             if (ln === "" || ln === undefined || ln === null) break;
-            var eq = String(ln).indexOf("=");
-            if (eq > 0) { map[String(ln).substring(0, eq).trim()] = String(ln).substring(eq + 1).trim(); any = true; }
+            out.push(String(ln));
         }
-
-        if (!any) {   // old positional format (or no config at all)
-            var s0 = rline(0);
-            if (s0 === "" || s0 === undefined || s0 === null || isNaN(parseFloat(s0))) return false;
-            root.red=pI(rline(0),root.red); root.green=pI(rline(1),root.green); root.blue=pI(rline(2),root.blue);
-            root.rpmredline=pI(rline(3),root.rpmredline); root.rpmmax=pI(rline(4),root.rpmmax); root.rpmDamp=pI(rline(5),root.rpmDamp);
-            root.speedunits=pI(rline(6),root.speedunits); root.distunits=pI(rline(7),root.distunits);
-            root.coolantHigh=pF(rline(8),root.coolantHigh); root.coolantLow=pF(rline(9),root.coolantLow); root.tempunits=pI(rline(10),root.tempunits);
-            root.fuelHigh=pI(rline(11),root.fuelHigh); root.fuelLow=pI(rline(12),root.fuelLow); root.fuelDamp=pI(rline(13),root.fuelDamp);
-            root.oilTempHigh=pF(rline(14),root.oilTempHigh); root.oilTempLow=pF(rline(15),root.oilTempLow); root.oilTempUnits=pI(rline(16),root.oilTempUnits);
-            root.oilPressHigh=pF(rline(17),root.oilPressHigh); root.oilPressLow=pF(rline(18),root.oilPressLow); root.oilPressUnits=pI(rline(19),root.oilPressUnits);
-            root.batteryHigh=pF(rline(20),root.batteryHigh); root.batteryLow=pF(rline(21),root.batteryLow);
-            root.afrHigh=pF(rline(22),root.afrHigh); root.afrLow=pF(rline(23),root.afrLow); root.nightlight=pI(rline(24),root.nightlight);
-            root.afrSource=pI(rline(25),root.afrSource); root.placementSwap=pI(rline(26),root.placementSwap?1:0)!==0;
-            root.hideTachNums=pI(rline(27),root.hideTachNums?1:0)!==0; root.hideShiftLights=pI(rline(28),root.hideShiftLights?1:0)!==0;
-            root.showPeakGauge=pI(rline(29),root.showPeakGauge?1:0)!==0; root.peakGaugePosition=pI(rline(30),root.peakGaugePosition);
-            root.peakShowRpm=pI(rline(31),root.peakShowRpm?1:0)!==0; root.peakShowSpeed=pI(rline(32),root.peakShowSpeed?1:0)!==0;
-            root.peakShowAfr=pI(rline(33),root.peakShowAfr?1:0)!==0; root.peakShowOilTemp=pI(rline(34),root.peakShowOilTemp?1:0)!==0;
-            root.peakShowOilPress=pI(rline(35),root.peakShowOilPress?1:0)!==0; root.peakShowCoolant=pI(rline(36),root.peakShowCoolant?1:0)!==0;
-            root.showModeButtons=pI(rline(37),root.showModeButtons?1:0)!==0; root.vShift=pI(rline(38),root.vShift);
-            return true;
+        return out;
+    }
+    // Pick the folder that exists on this unit: one that already holds a config
+    // (new or old) wins; otherwise the first that accepts a write.
+    function resolveCfgDir() {
+        var i;
+        for (i = 0; i < root.cfgDirs.length; i++) {
+            root.cfgDir = root.cfgDirs[i];
+            if (readLines(cfg, 1).length > 0 || readLines(cfgOld, 1).length > 0) return;
         }
-
-        function g(k){ return map.hasOwnProperty(k) ? map[k] : ""; }
-        root.red=pI(g("red"),root.red); root.green=pI(g("green"),root.green); root.blue=pI(g("blue"),root.blue);
-        root.rpmredline=pI(g("rpmredline"),root.rpmredline); root.rpmmax=pI(g("rpmmax"),root.rpmmax); root.rpmDamp=pI(g("rpmDamp"),root.rpmDamp);
-        root.speedunits=pI(g("speedunits"),root.speedunits); root.distunits=pI(g("distunits"),root.distunits);
-        root.coolantHigh=pF(g("coolantHigh"),root.coolantHigh); root.coolantLow=pF(g("coolantLow"),root.coolantLow); root.tempunits=pI(g("tempunits"),root.tempunits);
-        root.fuelHigh=pI(g("fuelHigh"),root.fuelHigh); root.fuelLow=pI(g("fuelLow"),root.fuelLow); root.fuelDamp=pI(g("fuelDamp"),root.fuelDamp);
-        root.oilTempHigh=pF(g("oilTempHigh"),root.oilTempHigh); root.oilTempLow=pF(g("oilTempLow"),root.oilTempLow); root.oilTempUnits=pI(g("oilTempUnits"),root.oilTempUnits);
-        root.oilPressHigh=pF(g("oilPressHigh"),root.oilPressHigh); root.oilPressLow=pF(g("oilPressLow"),root.oilPressLow); root.oilPressUnits=pI(g("oilPressUnits"),root.oilPressUnits);
-        root.batteryHigh=pF(g("batteryHigh"),root.batteryHigh); root.batteryLow=pF(g("batteryLow"),root.batteryLow);
-        root.afrHigh=pF(g("afrHigh"),root.afrHigh); root.afrLow=pF(g("afrLow"),root.afrLow); root.nightlight=pI(g("nightlight"),root.nightlight);
-        root.afrSource=pI(g("afrSource"),root.afrSource); root.placementSwap=pI(g("placementSwap"),root.placementSwap?1:0)!==0;
-        root.hideTachNums=pI(g("hideTachNums"),root.hideTachNums?1:0)!==0; root.hideShiftLights=pI(g("hideShiftLights"),root.hideShiftLights?1:0)!==0;
-        root.showPeakGauge=pI(g("showPeakGauge"),root.showPeakGauge?1:0)!==0; root.peakGaugePosition=pI(g("peakGaugePosition"),root.peakGaugePosition);
-        root.peakShowRpm=pI(g("peakShowRpm"),root.peakShowRpm?1:0)!==0; root.peakShowSpeed=pI(g("peakShowSpeed"),root.peakShowSpeed?1:0)!==0;
-        root.peakShowAfr=pI(g("peakShowAfr"),root.peakShowAfr?1:0)!==0; root.peakShowOilTemp=pI(g("peakShowOilTemp"),root.peakShowOilTemp?1:0)!==0;
-        root.peakShowOilPress=pI(g("peakShowOilPress"),root.peakShowOilPress?1:0)!==0; root.peakShowCoolant=pI(g("peakShowCoolant"),root.peakShowCoolant?1:0)!==0;
-        root.showModeButtons=pI(g("showModeButtons"),root.showModeButtons?1:0)!==0; root.vShift=pI(g("vShift"),root.vShift);
-        root.barColours=clamp(pI(g("barColours"),root.barColours),0,2);
-        for (var fi = 0; fi < root.fxKeys.length; fi++) { var fk = root.fxKeys[fi]; root[fk] = pI(g(fk), root[fk] ? 1 : 0) !== 0; }
-        root.launchRpm=pI(g("launchRpm"),root.launchRpm);
-        root.bgRed=clamp(pI(g("bgRed"),root.bgRed),0,255); root.bgGreen=clamp(pI(g("bgGreen"),root.bgGreen),0,255); root.bgBlue=clamp(pI(g("bgBlue"),root.bgBlue),0,255);
-        root.theme=clamp(pI(g("theme"),root.theme),0,3); root.neonFont=pI(g("neonFont"),root.neonFont?1:0)!==0;
-        root.logoTint=clamp(pI(g("logoTint"),root.logoTint),0,2);
-        root.rightWing=clamp(pI(g("rightWing"),root.rightWing),0,7);
-        root.greenFrom=pI(g("greenFrom"),root.greenFrom); root.yellowFrom=pI(g("yellowFrom"),root.yellowFrom); root.redFrom=pI(g("redFrom"),root.redFrom);
-        return true;
+        for (i = 0; i < root.cfgDirs.length; i++) {
+            root.cfgDir = root.cfgDirs[i];
+            saveConfig();                                    // seed defaults
+            if (readLines(cfg, 1).length > 0) return;        // write stuck -> folder exists
+        }
+        root.cfgDir = root.cfgDirs[root.cfgDirs.length - 1]; // fallback
+    }
+    function applyCfg(k, v) {
+        if (root.cfgKeys.indexOf(k) === -1 || v === undefined || v === null || v === "") return;
+        if (typeof root[k] === "boolean") root[k] = (v === true || v === 1 || v === "1" || v === "true");
+        else { var n = Number(v); if (!isNaN(n)) root[k] = n; }
+    }
+    function sanitizeCfg() {       // keep hand-edited values inside what the dash can show
+        root.theme = clamp(root.theme, 0, 3); root.rightWing = clamp(root.rightWing, 0, 7);
+        root.logoTint = clamp(root.logoTint, 0, 2); root.barColors = clamp(root.barColors, 0, 2);
+        root.bgRed = clamp(root.bgRed, 0, 255); root.bgGreen = clamp(root.bgGreen, 0, 255); root.bgBlue = clamp(root.bgBlue, 0, 255);
+        root.red = clamp(root.red, 0, 255); root.green = clamp(root.green, 0, 255); root.blue = clamp(root.blue, 0, 255);
+    }
+    // returns "json", "legacy" (old .txt imported), "none" (nothing found) or
+    // "error" (JSON present but invalid: defaults kept, file NOT overwritten)
+    function loadConfig() {
+        var i, lines = readLines(cfg, 400);
+        if (lines.length > 0) {
+            try {
+                var obj = JSON.parse(lines.join("\n"));
+                for (i = 0; i < root.cfgKeys.length; i++)
+                    if (obj.hasOwnProperty(root.cfgKeys[i])) applyCfg(root.cfgKeys[i], obj[root.cfgKeys[i]]);
+                if (!obj.hasOwnProperty("barColors") && obj.hasOwnProperty("barColours")) applyCfg("barColors", obj.barColours);   // key was renamed
+                sanitizeCfg();
+                return "json";
+            } catch (e) {
+                console.log("HethelRace: config JSON invalid, keeping defaults and not overwriting (" + e + ")");
+                return "error";
+            }
+        }
+        var old = readLines(cfgOld, 200);                    // one-time import of key=value lines
+        if (old.length > 0) {
+            for (i = 0; i < old.length; i++) {
+                var eq = old[i].indexOf("=");
+                if (eq > 0) {
+                    var ok = old[i].substring(0, eq).trim();
+                    applyCfg(ok === "barColours" ? "barColors" : ok, old[i].substring(eq + 1).trim());   // key was renamed
+                }
+            }
+            sanitizeCfg();
+            return "legacy";
+        }
+        return "none";
     }
     function saveConfig() {
         try {
-            var a = [];
-            a.push("red=" + root.red); a.push("green=" + root.green); a.push("blue=" + root.blue);
-            a.push("rpmredline=" + root.rpmredline); a.push("rpmmax=" + root.rpmmax); a.push("rpmDamp=" + root.rpmDamp);
-            a.push("speedunits=" + root.speedunits); a.push("distunits=" + root.distunits);
-            a.push("coolantHigh=" + root.coolantHigh.toFixed(1)); a.push("coolantLow=" + root.coolantLow.toFixed(1)); a.push("tempunits=" + root.tempunits);
-            a.push("fuelHigh=" + root.fuelHigh); a.push("fuelLow=" + root.fuelLow); a.push("fuelDamp=" + root.fuelDamp);
-            a.push("oilTempHigh=" + root.oilTempHigh.toFixed(1)); a.push("oilTempLow=" + root.oilTempLow.toFixed(1)); a.push("oilTempUnits=" + root.oilTempUnits);
-            a.push("oilPressHigh=" + root.oilPressHigh.toFixed(1)); a.push("oilPressLow=" + root.oilPressLow.toFixed(1)); a.push("oilPressUnits=" + root.oilPressUnits);
-            a.push("batteryHigh=" + root.batteryHigh.toFixed(1)); a.push("batteryLow=" + root.batteryLow.toFixed(1));
-            a.push("afrHigh=" + root.afrHigh.toFixed(2)); a.push("afrLow=" + root.afrLow.toFixed(2)); a.push("nightlight=" + root.nightlight);
-            a.push("afrSource=" + root.afrSource); a.push("placementSwap=" + (root.placementSwap ? 1 : 0));
-            a.push("hideTachNums=" + (root.hideTachNums ? 1 : 0)); a.push("hideShiftLights=" + (root.hideShiftLights ? 1 : 0));
-            a.push("showPeakGauge=" + (root.showPeakGauge ? 1 : 0)); a.push("peakGaugePosition=" + root.peakGaugePosition);
-            a.push("peakShowRpm=" + (root.peakShowRpm ? 1 : 0)); a.push("peakShowSpeed=" + (root.peakShowSpeed ? 1 : 0));
-            a.push("peakShowAfr=" + (root.peakShowAfr ? 1 : 0)); a.push("peakShowOilTemp=" + (root.peakShowOilTemp ? 1 : 0));
-            a.push("peakShowOilPress=" + (root.peakShowOilPress ? 1 : 0)); a.push("peakShowCoolant=" + (root.peakShowCoolant ? 1 : 0));
-            a.push("showModeButtons=" + (root.showModeButtons ? 1 : 0)); a.push("vShift=" + root.vShift);
-            a.push("theme=" + root.theme); a.push("neonFont=" + (root.neonFont ? 1 : 0)); a.push("bgRed=" + root.bgRed); a.push("bgGreen=" + root.bgGreen); a.push("bgBlue=" + root.bgBlue);
-            a.push("barColours=" + root.barColours); a.push("greenFrom=" + root.greenFrom);
-            a.push("yellowFrom=" + root.yellowFrom); a.push("redFrom=" + root.redFrom);
-            for (var fi = 0; fi < root.fxKeys.length; fi++) a.push(root.fxKeys[fi] + "=" + (root[root.fxKeys[fi]] ? 1 : 0));
-            a.push("launchRpm=" + root.launchRpm); a.push("rightWing=" + root.rightWing); a.push("logoTint=" + root.logoTint);
-            cfg.open(); cfg.writetoopenfile(a.join("\n") + "\n"); cfg.close();
+            var obj = {};
+            for (var i = 0; i < root.cfgKeys.length; i++) {
+                var v = root[root.cfgKeys[i]];
+                obj[root.cfgKeys[i]] = (typeof v === "number") ? Math.round(v * 100) / 100 : v;   // no 0.1+0.2 noise
+            }
+            cfg.open(); cfg.writetoopenfile(JSON.stringify(obj, null, 2) + "\n"); cfg.close();   // single write
         } catch (e) { console.log("HethelRace: could not write config (" + e + ")"); }
     }
     // First run: if no config is found, write the current defaults so the file
@@ -2040,9 +2057,9 @@ Item {
         // NOT draw its own warning-light bar over the dash. Hardware-only flag
         // (the property is absent in the desktop sim), so the write is guarded.
         if (root.d) { try { root.d.DISABLE_WARNING_OVERLAY = "YES_WARNINGS_HANDLED_LOCALLY"; } catch (e) {} }
-        resolveCfgPath();        // pick /opt/Garw_IC7 vs /opt/IC7 (whichever exists on this unit)
-        if (!loadConfig())
-            saveConfig();
+        resolveCfgDir();         // pick /opt/Garw_IC7 vs /opt/IC7 (whichever exists on this unit)
+        var how = loadConfig();
+        if (how === "none" || how === "legacy") saveConfig();   // write the JSON (never over an invalid one)
         fuelDisplay = fuelNow();   // start the damped bar at the live level (no boot sweep)
         fuelFiltered = fuelDisplay;   // seed the trimmed-mean filter
         oilPressShown = oilpress;   // start oil pressure at live (boot self-test owns the boot sweep)
@@ -2060,102 +2077,76 @@ Item {
 
     // ---- menu model --------------------------------------------------------
     property bool menuOpen: false
-    property int  sel: 0
-    property int  settingsRev: 0      // bumped on every value change -> ListView value cells re-read
-    property real pulse: 0
+    property int  settingsRev: 0      // bumped on every value change -> menu value text re-reads
     property bool pUp: false
     property bool pDown: false
     property bool pLeft: false
     property bool pRight: false
-    property int  upHold: 0
-    property int  downHold: 0
-    property bool upArmed: false      // hold-to-ramp arms only after release
-    property bool downArmed: false
 
-    // every navigable row: {k: key, label: shown text}. Order = on-screen order.
-    readonly property var itemsAll: [
-        { k: "shift",  label: "SHIFT RPM" },
-        { k: "limit",  label: "RPM LIMIT" },
-        { k: "rdamp",  label: "RPM DAMPING" },
-        { k: "bcol",   label: "REV BAR COLOURS" },
-        { k: "gfrom",  label: "GREEN FROM" },
-        { k: "yfrom",  label: "YELLOW FROM" },
-        { k: "rfrom",  label: "RED FROM" },
-        { k: "theme",  label: "THEME" },
-        { k: "nfont",  label: "NEON FONT" },
-        { k: "red",    label: "RED" },
-        { k: "green",  label: "GREEN" },
-        { k: "blue",   label: "BLUE" },
-        { k: "bgr",    label: "BG RED" },
-        { k: "bgg",    label: "BG GREEN" },
-        { k: "bgb",    label: "BG BLUE" },
-        { k: "speed",  label: "SPEED UNIT" },
-        { k: "dist",   label: "DIST UNIT" },
-        { k: "chi",    label: "COOLANT HIGH" },
-        { k: "clo",    label: "COOLANT LOW" },
-        { k: "cun",    label: "COOLANT UNIT" },
-        { k: "fhi",    label: "FUEL HIGH" },
-        { k: "flo",    label: "FUEL LOW" },
-        { k: "fdmp",   label: "FUEL DAMP" },
-        { k: "othi",   label: "OIL TEMP HIGH" },
-        { k: "otlo",   label: "OIL TEMP LOW" },
-        { k: "otun",   label: "OIL TEMP UNIT" },
-        { k: "ophi",   label: "OIL PRESS HIGH" },
-        { k: "oplo",   label: "OIL PRESS LOW" },
-        { k: "opun",   label: "OIL PRESS UNIT" },
-        { k: "bhi",    label: "BATTERY HIGH" },
-        { k: "blo",    label: "BATTERY LOW" },
-        { k: "ahi",    label: "AFR HIGH" },
-        { k: "alo",    label: "AFR LOW" },
-        { k: "asrc",   label: "AFR SOURCE" },
-        { k: "night",  label: "NIGHTLIGHT" },
-        { k: "swap",   label: "RPM/SPEED SWAP" },
-        { k: "rwing",  label: "RIGHT WING" },
-        { k: "ltint",  label: "LOGO TINT" },
-        { k: "pkon",   label: "SHOW PEAK GAUGE" },
-        { k: "pkpos",  label: "PEAK POSITION" },
-        { k: "pkrpm",  label: "PEAK: RPM" },
-        { k: "pkspd",  label: "PEAK: SPEED" },
-        { k: "pkafr",  label: "PEAK: AFR" },
-        { k: "pkotm",  label: "PEAK: OIL TEMP" },
-        { k: "pkopr",  label: "PEAK: OIL PRESS" },
-        { k: "pkcol",  label: "PEAK: COOLANT" },
-        { k: "pkrst",  label: "RESET PEAKS" },
-        { k: "htn",    label: "HIDE TACH NUMS" },
-        { k: "hsl",    label: "HIDE SHIFT LIGHTS" },
-        { k: "mbtn",   label: "MODE BUTTONS" },
-        { k: "vshift", label: "V-SHIFT" },
-        { k: "fxSeq",      label: "FX: SEQ SHIFT LIGHTS" },
-        { k: "fxEdge",     label: "FX: EDGE SHIFT FLASH" },
-        { k: "fxRoll",     label: "FX: GEAR ROLL" },
-        { k: "fxBloom",    label: "FX: REDLINE BLOOM" },
-        { k: "fxLimiter",  label: "FX: LIMITER STUTTER" },
-        { k: "fxLaunch",   label: "FX: LAUNCH MODE" },
-        { k: "lrpm",       label: "LAUNCH RPM" },
-        { k: "fxAccel",    label: "FX: ACCEL/BRAKE BAR" },
-        { k: "fxStreaks",  label: "FX: SPEED STREAKS" },
-        { k: "fxBest",     label: "FX: NEW-BEST FLASH" },
-        { k: "fxRace",     label: "FX: RACE TAKEOVER" },
-        { k: "fxBanner",   label: "FX: WARNING BANNER" },
-        { k: "fxCold",     label: "FX: COLD REV LIMIT" },
-        { k: "fxShutdown", label: "FX: SHUTDOWN SWEEP" },
-        { k: "exit",   label: "EXIT" }
+    // The menu's groups and rows: {k: key, label: text}. A row's value, limits,
+    // help and visibility come from valueText / applyKey / helpText / rowHidden.
+    readonly property var menuGroups: [
+        { name: "Engine", rows: [
+            { k: "shift",  label: "Shift rpm" },      { k: "limit",  label: "Rpm limit" },
+            { k: "rdamp",  label: "Rpm damping" },    { k: "bcol",   label: "Bar colors" },
+            { k: "gfrom",  label: "Green from" },     { k: "yfrom",  label: "Yellow from" },
+            { k: "rfrom",  label: "Red from" } ] },
+        { name: "Display", rows: [
+            { k: "theme",  label: "Theme" },          { k: "nfont",  label: "Neon font" },
+            { k: "red",    label: "Accent red" },     { k: "green",  label: "Accent green" },
+            { k: "blue",   label: "Accent blue" },    { k: "bgr",    label: "Bg red" },
+            { k: "bgg",    label: "Bg green" },       { k: "bgb",    label: "Bg blue" },
+            { k: "night",  label: "Nightlight" },     { k: "vshift", label: "V-shift" },
+            { k: "mgrid",  label: "Menu grid" } ] },
+        { name: "Layout", rows: [
+            { k: "speed",  label: "Speed unit" },     { k: "dist",   label: "Dist unit" },
+            { k: "swap",   label: "Rpm/speed swap" }, { k: "rwing",  label: "Right wing" },
+            { k: "ltint",  label: "Logo tint" },      { k: "htn",    label: "Hide tach nums" },
+            { k: "hsl",    label: "Hide shift lights" }, { k: "mbtn", label: "Mode buttons" } ] },
+        { name: "Coolant & fuel", rows: [
+            { k: "cun",    label: "Coolant unit" },   { k: "chi",    label: "Coolant high" },
+            { k: "clo",    label: "Coolant low" },    { k: "fhi",    label: "Fuel high" },
+            { k: "flo",    label: "Fuel low" },       { k: "fdmp",   label: "Fuel damp" } ] },
+        { name: "Oil", rows: [
+            { k: "otun",   label: "Temp unit" },      { k: "othi",   label: "Temp high" },
+            { k: "otlo",   label: "Temp low" },       { k: "opun",   label: "Press unit" },
+            { k: "ophi",   label: "Press high" },     { k: "oplo",   label: "Press low" } ] },
+        { name: "Battery & AFR", rows: [
+            { k: "bhi",    label: "Battery high" },   { k: "blo",    label: "Battery low" },
+            { k: "asrc",   label: "AFR source" },     { k: "ahi",    label: "AFR high" },
+            { k: "alo",    label: "AFR low" } ] },
+        { name: "Peak card", rows: [
+            { k: "pkon",   label: "Show" },           { k: "pkpos",  label: "Position" },
+            { k: "pkrpm",  label: "Rpm" },            { k: "pkspd",  label: "Speed" },
+            { k: "pkafr",  label: "AFR" },            { k: "pkotm",  label: "Oil temp" },
+            { k: "pkopr",  label: "Oil press" },      { k: "pkcol",  label: "Coolant" },
+            { k: "pkrst",  label: "Reset peaks" } ] },
+        { name: "FX shift", rows: [
+            { k: "fxSeq",     label: "Seq shift lights" }, { k: "fxEdge",    label: "Edge flash" },
+            { k: "fxRoll",    label: "Gear roll" },        { k: "fxBloom",   label: "Redline bloom" },
+            { k: "fxLimiter", label: "Limiter stutter" },  { k: "fxLaunch",  label: "Launch mode" },
+            { k: "lrpm",      label: "Launch rpm" } ] },
+        { name: "FX drive", rows: [
+            { k: "fxAccel",   label: "Accel/brake bar" },  { k: "fxStreaks", label: "Speed streaks" },
+            { k: "fxBest",    label: "New-best flash" },   { k: "fxRace",    label: "Race takeover" },
+            { k: "fxBanner",  label: "Warning banner" },   { k: "fxCold",    label: "Cold rev limit" },
+            { k: "fxShutdown", label: "Shutdown sweep" } ] },
+        { name: "Save & Exit", action: true, glyph: "\u25CB", rows: [] }
     ]
     // the PEAK: * picker rows appear only while SHOW PEAK GAUGE is on
     readonly property var peakItemKeys: ["pkrpm","pkspd","pkafr","pkotm","pkopr","pkcol","pkrst"]
-    readonly property var items: itemsAll
     // a PEAK: * picker row is collapsed and skipped while SHOW PEAK GAUGE is off,
     // without changing the model identity (which would reset the selector to top)
-    // the GREEN/YELLOW/RED FROM rows appear only while REV BAR COLOURS is ZONES
+    // the GREEN/YELLOW/RED FROM rows appear only while REV BAR COLORS is ZONES
     readonly property var zoneItemKeys: ["gfrom","yfrom","rfrom"]
     function rowHidden(k) { return (!showPeakGauge && peakItemKeys.indexOf(k) !== -1)
-                                || (barColours !== 1 && zoneItemKeys.indexOf(k) !== -1)
+                                || (barColors !== 1 && zoneItemKeys.indexOf(k) !== -1)
                                 || (!fxLaunch && k === "lrpm")
                                 || (rightWing !== 6 && k === "ltint")
                                 || (!sunset && k === "nfont"); }
     function isFx(k) { return k.indexOf("fx") === 0; }
     readonly property var fxHelp: ({
-        fxSeq:      "12 LEDs fill from both ends to the centre from 82% of SHIFT RPM, then flash. Off = the three rings.",
+        fxSeq:      "12 LEDs fill from both ends to the center from 82% of SHIFT RPM, then flash. Off = the three rings.",
         fxEdge:     "Accent bars down both screen edges strobe at SHIFT RPM.",
         fxRoll:     "Gear digit rolls up on an upshift, down on a downshift. Off = pop.",
         fxBloom:    "The glow behind the bar widens and strengthens in the red zone.",
@@ -2165,30 +2156,31 @@ Item {
         fxStreaks:  "Lines in the wings that lengthen with road speed.",
         fxBest:     "RIGHT WING max speed / max RPM count up and flash green on a new best; so does a best 0-60 time.",
         fxRace:     "RACE input on: the side gauges shrink back, the gear and rev bar grow.",
-        fxBanner:   "Low oil pressure / coolant overtemp slide a red banner across the centre for 3 s.",
+        fxBanner:   "Low oil pressure / coolant overtemp slide a red banner across the center for 3 s.",
         fxCold:     "Until the oil reaches OIL TEMP LOW, a blue band marks a reduced rev ceiling that rises as it warms.",
         fxShutdown: "When the engine stops, the gauges slide out and back in."
     })
     // toggles + exit aren't hold-to-ramp; everything else is.
-    readonly property var noRamp: ["nfont", "ltint", "theme", "bcol", "rwing", "speed", "dist", "cun", "otun", "opun", "asrc", "swap", "pkon", "pkpos", "pkrpm", "pkspd", "pkafr", "pkotm", "pkopr", "pkcol", "pkrst", "htn", "hsl", "mbtn", "exit"]
+    readonly property var noRamp: ["mgrid", "nfont", "ltint", "theme", "bcol", "rwing", "speed", "dist", "cun", "otun", "opun", "asrc", "swap", "pkon", "pkpos", "pkrpm", "pkspd", "pkafr", "pkotm", "pkopr", "pkcol", "pkrst", "htn", "hsl", "mbtn", "exit"]
     function isRampable(k) { return noRamp.indexOf(k) === -1 && !isFx(k); }
     function helpText(k) {
         if (isFx(k)) return fxHelp[k];
         switch (k) {
-        case "bgr": case "bgg": case "bgb": return "Background tint (0-255): backdrop, panels and borders. Default 0/120/74 = Lotus green; 0/0/0 = carbon grey. Not used by the SUNSET / CITY MAP themes.";
-        case "theme": return "DARK: light text on a dark background. LIGHT: dark text on near-white. SUNSET: neon dusk with palms. CITY MAP: night street map with card panels. Both use star shift lights, a red/blue shift strobe and fixed colours.";
+        case "bgr": case "bgg": case "bgb": return "Background tint (0-255): backdrop, panels and borders. Default 0/120/74 = Lotus green; 0/0/0 = carbon gray. Not used by the SUNSET / CITY MAP themes.";
+        case "theme": return "DARK: light text on a dark background. LIGHT: dark text on near-white. SUNSET: neon dusk with palms. CITY MAP: night street map with card panels. Both use star shift lights, a red/blue shift strobe and fixed colors.";
+        case "mgrid": return "Moving tile grid behind this settings screen. OFF = plain background (lighter on the graphics chip).";
         case "nfont": return "Use the Pricedown display font for the gear, numbers and labels in the SUNSET / CITY MAP themes. OFF = the standard font.";
-        case "ltint": return "Recolour the logo: OFF = as supplied, THEME = text colour (white on DARK, black on LIGHT), ACCENT = accent colour. For single-colour logos.";
-        case "lrpm": return "Centre of the launch target band (\u00B1300 rpm).";
+        case "ltint": return "Recolor the logo: OFF = as supplied, THEME = text color (white on DARK, black on LIGHT), ACCENT = accent color. For single-color logos.";
+        case "lrpm": return "Center of the launch target band (\u00B1300 rpm).";
         case "rwing": return "Readout right of the gear: 0-100 km/h (0-60 mph) timer, fuel %, max speed, max RPM, session timer, peak g, a logo image (assets/wing_logo.png), or off.";
         case "shift": return "RPM where the redline / shift lights begin.";
         case "limit": return "Full-scale RPM at the top of the tach sweep.";
         case "rdamp": return "Needle smoothing (1 = sharp \u2192 10 = smooth).";
-        case "bcol": return "ZONES: green, yellow, then red at the rpm set below. BLEND: green fading to the accent, red at SHIFT RPM. ACCENT: accent colour, red at SHIFT RPM.";
-        case "gfrom": return "The bar is green from this rpm; below it, the accent colour. 0 = green from the start.";
+        case "bcol": return "ZONES: green, yellow, then red at the rpm set below. BLEND: green fading to the accent, red at SHIFT RPM. ACCENT: accent color, red at SHIFT RPM.";
+        case "gfrom": return "The bar is green from this rpm; below it, the accent color. 0 = green from the start.";
         case "yfrom": return "The bar turns yellow from this rpm. Set it equal to RED FROM to leave yellow out.";
         case "rfrom": return "The bar turns red from this rpm to the end of the scale.";
-        case "red": case "green": case "blue": return "Accent colour (0-255). Default 255/224/0 = Lotus yellow. Not used by the SUNSET / CITY MAP themes.";
+        case "red": case "green": case "blue": return "Accent color (0-255). Default 255/224/0 = Lotus yellow. Not used by the SUNSET / CITY MAP themes.";
         case "speed": return "Units for speed, odometer and trip.";
         case "dist": return "Distance units for ODO / TRIP.";
         case "chi": return "Coolant warns above this temperature.";
@@ -2227,14 +2219,14 @@ Item {
     function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
     // dir = +1 (Up) / -1 (Down). Steps / clamps are chosen per setting.
-    function applyValue(dir) {
-        var k = items[sel].k;
+    function applyKey(k, dir) {
         if (isFx(k)) { root[k] = !root[k]; root.settingsRev += 1; return; }
         switch (k) {
         case "lrpm":   root.launchRpm    = clamp(root.launchRpm + dir * 100, 2300, root.rpmmax - 300); break;
         case "rwing":  root.rightWing    = ((root.rightWing + dir) % 8 + 8) % 8; break;
         case "theme":  root.theme        = ((root.theme + dir) % 4 + 4) % 4; break;
         case "nfont":  root.neonFont     = !root.neonFont; break;
+        case "mgrid":  root.menuGrid     = !root.menuGrid; break;
         case "ltint":  root.logoTint     = ((root.logoTint + dir) % 3 + 3) % 3; break;
         case "bgr":    root.bgRed        = clamp(root.bgRed   + dir * 5, 0, 255); break;
         case "bgg":    root.bgGreen      = clamp(root.bgGreen + dir * 5, 0, 255); break;
@@ -2242,7 +2234,7 @@ Item {
         case "shift":  root.rpmredline   = clamp(root.rpmredline + dir * 100, 2000, root.rpmmax - 100); break;
         case "limit":  root.rpmmax       = clamp(root.rpmmax     + dir * 100, 4000, 12000); break;
         case "rdamp":  root.rpmDamp      = clamp(root.rpmDamp    + dir,        1,    10);    break;
-        case "bcol":   root.barColours   = ((root.barColours + dir) % 3 + 3) % 3; break;
+        case "bcol":   root.barColors   = ((root.barColors + dir) % 3 + 3) % 3; break;
         // zone starts stay ordered: green <= yellow <= red <= RPM LIMIT
         case "gfrom":  root.greenFrom    = clamp(root.greenFrom  + dir * 100, 0, Math.min(root.yellowFrom, root.rpmmax)); break;
         case "yfrom":  root.yellowFrom   = clamp(root.yellowFrom + dir * 100, root.greenFrom, Math.min(root.redFrom, root.rpmmax)); break;
@@ -2284,9 +2276,8 @@ Item {
         case "hsl":    root.hideShiftLights = !root.hideShiftLights; break;
         case "mbtn":   root.showModeButtons = !root.showModeButtons; break;
         case "vshift": root.vShift = clamp(root.vShift + dir * 2, -40, 40); break;
-        case "exit":   if (dir > 0) { saveConfig(); closeMenu(); return; } break;
         }
-        root.settingsRev += 1;          // triggers the ListView value cells to re-read
+        root.settingsRev += 1;          // tells the menu to re-read the value text
     }
 
     // value shown on the right of each row
@@ -2296,6 +2287,7 @@ Item {
         case "lrpm":   return String(root.launchRpm);
         case "theme":  return root.theme === 1 ? "LIGHT" : (root.theme === 2 ? "SUNSET" : (root.theme === 3 ? "CITY MAP" : "DARK"));
         case "nfont":  return root.neonFont ? "ON" : "OFF";
+        case "mgrid":  return root.menuGrid ? "ON" : "OFF";
         case "ltint":  return root.logoTint === 1 ? "THEME" : root.logoTint === 2 ? "ACCENT" : "OFF";
         case "bgr":    return String(root.bgRed);
         case "bgg":    return String(root.bgGreen);
@@ -2304,7 +2296,7 @@ Item {
         case "shift":  return String(root.rpmredline);
         case "limit":  return String(root.rpmmax);
         case "rdamp":  return String(root.rpmDamp);
-        case "bcol":   return root.barColours === 1 ? "ZONES" : root.barColours === 2 ? "BLEND" : "ACCENT";
+        case "bcol":   return root.barColors === 1 ? "ZONES" : root.barColors === 2 ? "BLEND" : "ACCENT";
         case "gfrom":  return String(root.greenFrom);
         case "yfrom":  return String(root.yellowFrom);
         case "rfrom":  return String(root.redFrom);
@@ -2350,23 +2342,22 @@ Item {
         return "";
     }
 
-    function openMenu()  { menuOpen = true; sel = 0; upArmed = false; downArmed = false; upHold = 0; downHold = 0; try { if (root.d) root.d.settings_on_offdata = 1; } catch (e) {} }
+    function openMenu()  { menuOpen = true;  try { if (root.d) root.d.settings_on_offdata = 1; } catch (e) {} }
     function closeMenu() { menuOpen = false; try { if (root.d) root.d.settings_on_offdata = 0; } catch (e) {} }
-    function moveSel(dir){
-        var n = items.length;
-        do { sel = ((sel + dir) % n + n) % n; } while (rowHidden(items[sel].k));
-    }
 
-    // ---- input handling (signal-driven edge detection) ---------------------
+    // ---- input handling (edge detection; polled as well as signal-driven) ---
+    //  Menu closed: Up opens it. Menu open: Left / Right move, Up / Down act
+    //  (open a group, change a value; numeric values repeat while held).
     function evalEdges() {
         var u = dUp(), dn = dDown(), l = dLeft(), r = dRight();
         if (!menuOpen) {
             if (u && !pUp) openMenu();
         } else {
-            if (l && !pLeft)  moveSel(-1);
-            if (r && !pRight) moveSel(1);
-            if (u && !pUp)   { applyValue(1);  upHold = 0; }
-            if (dn && !pDown){ applyValue(-1); downHold = 0; }
+            if (l && !pLeft)  menu.move(-1);
+            if (r && !pRight) menu.move(1);
+            if (u && !pUp)    menu.press(1);
+            if (dn && !pDown) menu.press(-1);
+            if ((!u && pUp) || (!dn && pDown)) menu.release();
         }
         pUp = u; pDown = dn; pLeft = l; pRight = r;
         // mirror the flasher/bulb state (poll-driven; works without change signals)
@@ -2386,132 +2377,161 @@ Item {
         interval: 30; running: true; repeat: true
         onTriggered: root.evalEdges()
     }
-    Timer {   // hold-to-ramp for numeric rows (only runs while the menu is open)
-        interval: 90; running: root.menuOpen; repeat: true
-        onTriggered: {
-            if (root.menuOpen && root.isRampable(root.items[root.sel].k)) {
-                // upArmed/downArmed gate the ramp until the button is released
-                // once, so the same Up-press that opened the menu can't ramp.
-                if (root.dUp()) {
-                    if (root.upArmed) { root.upHold += 1;
-                        var ru = Math.max(1, 3 - Math.floor((root.upHold - 2) / 5));
-                        if (root.upHold > 2 && root.upHold % ru === 0) root.applyValue(1);
-                    }
-                } else { root.upArmed = true; root.upHold = 0; }
-                if (root.dDown()) {
-                    if (root.downArmed) { root.downHold += 1;
-                        var rd = Math.max(1, 3 - Math.floor((root.downHold - 2) / 5));
-                        if (root.downHold > 2 && root.downHold % rd === 0) root.applyValue(-1);
-                    }
-                } else { root.downArmed = true; root.downHold = 0; }
-            }
-            // menu repaints only on navigation (openMenu/moveSel/applyValue),
-            // so there is no per-pulse repaint here — keeps the IC7 responsive.
+
+    // ---- settings focus (as in AgeSolo): a pulsing outline around the part of the
+    //      dash the selected menu row edits. [x, y, w, h] in dash coordinates, or
+    //      null for rows that affect the whole screen (theme, colors, V-shift, edge flash ...).
+    readonly property var focusRect: {
+        var k = menuOpen ? menu.focusKey : "";
+        if (k === "") return null;
+        var bar = [26, 42, 748, 140], oilP = [8, 180, 184, 92], oilT = [8, 272, 184, 92];
+        var afrB = [608, 180, 184, 92], cool = [608, 272, 184, 92], rw = [468, 142, 142, 92];
+        switch (k) {
+        case "shift": case "limit": case "rdamp": case "bcol": case "gfrom": case "yfrom": case "rfrom":
+        case "htn": case "fxBloom": case "fxLimiter": case "fxCold": case "fxLaunch": case "lrpm": return bar;
+        case "hsl": case "fxSeq":                 return [222, 2, 356, 44];
+        // (no outline for fxEdge: it would sit on top of the edge bars the demo is showing)
+        case "fxRoll":                            return [328, 132, 144, 136];
+        // the speed readout: big under the gear, or on the left wing when RPM/SPEED SWAP is on
+        case "speed":                             return placementSwap ? [190, 160, 144, 72] : [296, 258, 208, 90];
+        case "swap":                              return [190, 134, 316, 216];      // both readouts it swaps
+        case "dist":                              return showModeButtons ? [636, 446, 156, 32] : [636, 412, 156, 34];
+        case "rwing": case "ltint": case "fxBest": return rw;
+        case "mbtn":                              return [630, 409, 162, 42];
+        case "chi": case "clo": case "cun":       return cool;
+        case "fhi": case "flo": case "fdmp":      return [582, 370, 208, 36];
+        case "othi": case "otlo": case "otun":    return oilT;
+        case "ophi": case "oplo": case "opun":    return oilP;
+        case "bhi": case "blo":                   return [10, 370, 196, 36];
+        case "ahi": case "alo": case "asrc":      return afrB;
+        case "pkon": case "pkpos": case "pkrpm": case "pkspd": case "pkafr": case "pkotm": case "pkopr": case "pkcol": case "pkrst":
+                                                  return [peakX - 4, peakY - 4, 184, 92];
+        case "fxAccel":                           return [292, 340, 216, 22];
+        case "fxStreaks":                         return [194, 246, 412, 100];
+        case "fxBanner":                          return [2, 262, 796, 74];
         }
+        return null;
+    }
+    property real focusPulse: 1
+    SequentialAnimation {
+        running: root.focusRect !== null
+        loops: Animation.Infinite
+        onRunningChanged: if (!running) root.focusPulse = 1
+        NumberAnimation { target: root; property: "focusPulse"; to: 0.25; duration: 500; easing.type: Easing.InOutSine }
+        NumberAnimation { target: root; property: "focusPulse"; to: 1;    duration: 500; easing.type: Easing.InOutSine }
     }
 
-    // ---- settings overlay: panel + ListView -------------------------------
-    //  Item-based, not a Canvas: only the rows that change repaint, the view
-    //  recycles off-screen rows, and Rectangle.radius gives reliable rounded
-    //  corners (no arcTo). Driven entirely by the D-pad: currentIndex follows
-    //  root.sel; value cells re-read valueText() when settingsRev bumps.
-    Item {
+    // ---- FX demo -------------------------------------------------------------
+    //  The effects are event-driven, so parked in the settings menu most of them
+    //  would never play. While an FX row that is ON is selected, the live frame is
+    //  fed SIMULATED inputs that trigger that one effect on a loop ("DEMO" shows
+    //  above the frame). The simulated values replace rpm / speed / gear (and oil
+    //  temp / pressure, RACE input) only while this is active; session peaks, the
+    //  0-60 timer, peak g and the session timer ignore them.
+    readonly property string demoKey: {
+        var rev = settingsRev;                               // re-check after a toggle
+        if (!menuOpen) return "";
+        var k = menu.focusKey;
+        if (k === "lrpm") return fxLaunch ? "fxLaunch" : "";
+        return (k !== "" && isFx(k) && root[k]) ? k : "";
+    }
+    readonly property bool demoOn: demoKey !== ""
+    // entering / leaving a demo jumps the speed: drop the accel history so the jump
+    // is never read as a real acceleration (keeps PEAK G clean)
+    onDemoOnChanged: { spdBuf = []; accelG = 0; }
+    property real demoT: 0             // seconds since this demo started (wall clock, so it never runs slow)
+    property real demoPrev: 0
+    property real demoStart: 0
+    property real demoRpm: 0
+    property real demoSpeed: 0
+    property int  demoGear: 3
+    property real demoOilT: 90
+    property bool demoRace: false
+    onDemoKeyChanged: { demoT = 0; demoPrev = -1; demoStart = Date.now(); demoRace = false; if (demoOn) demoStep(); }
+    function demoTri(t, period) { var p = (t % period) / period; return p < 0.5 ? p * 2 : 2 - p * 2; }   // 0..1..0
+    function demoStep() {
+        var t = demoT, k = demoKey, c, r = 3000, sp = 100, g = 3;
+        if (k === "fxSeq" || k === "fxEdge" || k === "fxBloom") {
+            c = t % 4.0;                                     // climb to the shift point, hold past it, drop
+            r = c < 2.2 ? rpmredline * (0.55 + 0.45 * c / 2.2) : (c < 3.4 ? rpmredline + 250 : rpmredline * 0.55);
+            if (k === "fxBloom") r = c < 2.2 ? revRedStart - 1500 + 1900 * c / 2.2 : (c < 3.4 ? revRedStart + 400 : revRedStart - 1500);
+            sp = 130;
+        } else if (k === "fxLimiter") {
+            c = t % 4.0; r = c < 1.8 ? rpmmax * (0.6 + 0.4 * c / 1.8) : (c < 3.3 ? rpmmax : rpmmax * 0.6); sp = 150;
+        } else if (k === "fxRoll") {
+            g = [1, 2, 3, 4, 3, 2][Math.floor(t / 0.9) % 6]; r = 4200; sp = 30 + g * 22;
+        } else if (k === "fxLaunch") {
+            c = t % 5.0;                                     // rev up into the band, hold, go
+            r = c < 1.6 ? 2100 + (launchRpm - 2100) * c / 1.6 : launchRpm;
+            sp = c < 3.6 ? 0 : 25; g = 1;
+        } else if (k === "fxAccel") {
+            sp = 60 + 90 * demoTri(t, 5.0); r = 3000 + 2500 * demoTri(t, 5.0);
+        } else if (k === "fxStreaks") {
+            sp = 240 * demoTri(t, 6.0); r = 2500 + 3500 * demoTri(t, 6.0); g = 4;
+        } else if (k === "fxBest") {
+            r = 4500; sp = 120;
+            if (Math.floor(t / 2.2) !== Math.floor(demoPrev / 2.2)) bestAnim.restart();
+        } else if (k === "fxRace") {
+            r = 4500; sp = 120; demoRace = (t % 3.2) > 1.0;
+        } else if (k === "fxBanner") {
+            r = 3500; sp = 90;
+            if (Math.floor(t / 4.4) !== Math.floor(demoPrev / 4.4)) {
+                bannerText = (Math.floor(t / 4.4) % 2) ? "COOLANT OVERTEMP" : "LOW OIL PRESSURE"; bannerAnim.restart();
+            }
+        } else if (k === "fxCold") {
+            r = 2500; sp = 60; demoOilT = oilTempLow - 55 + 60 * ((t % 6.0) / 6.0);    // oil warming -> ceiling rises
+        } else if (k === "fxShutdown") {
+            c = t % 5.0; r = c < 1.5 ? 3000 : 0; sp = 0; g = 0;      // run, then stop -> sweep out and back
+        }
+        demoRpm = Math.max(0, Math.min(rpmmax, r)); demoSpeed = sp; demoGear = g;
+    }
+    Timer { interval: 50; repeat: true; running: root.demoOn; onTriggered: { root.demoPrev = root.demoT; root.demoT = (Date.now() - root.demoStart) / 1000; root.demoStep(); } }
+
+    // ---- settings screen -----------------------------------------------------
+    //  The two-level menu (SettingsMenu.qml, from the AgeSolo dash) slides in on
+    //  the left while the LIVE dash shrinks into the frame on the right (see
+    //  dashView.menuAmt), so every change is seen on the real thing. The help
+    //  line for the selected row sits under the frame.
+    SettingsMenu {
         id: menu
-        anchors.fill: parent
-        visible: root.menuOpen
-
-        readonly property int visibleRows: 11
-        readonly property int rowH: 30
-
-        Rectangle { anchors.fill: parent; color: root.bgS(0.042, 1); opacity: 0.80 }   // dim the full-size dash behind
-
-        Rectangle {
-            id: panel
-            width: 772; height: 452; anchors.centerIn: parent
-            radius: 16; color: root.bgS(0.15, 6); border.color: root.bgS(0.508, 29); border.width: 2
-
-            Text {
-                text: "SETTINGS"; color: root.fg
-                font.pixelSize: 24; font.bold: root.dispBold; font.family: root.dispFont
-                anchors.horizontalCenter: parent.horizontalCenter; y: 12
-            }
-            Rectangle { x: 24; y: 46; width: parent.width - 48; height: 3; color: root.accentInk }
-
-            // ----- LEFT: settings list -----
-            ListView {
-                id: menuList
-                x: 22; y: 60
-                width: 356; height: menu.visibleRows * menu.rowH
-                clip: true
-                interactive: false
-                model: root.items
-                currentIndex: root.sel
-                highlightMoveDuration: 0
-                highlightRangeMode: ListView.ApplyRange
-                preferredHighlightBegin: 5 * menu.rowH
-                preferredHighlightEnd:   6 * menu.rowH
-                delegate: Item {
-                    id: row
-                    width: ListView.view.width
-                    height: root.rowHidden(modelData.k) ? 0 : menu.rowH
-                    visible: !root.rowHidden(modelData.k)
-                    property bool current: ListView.isCurrentItem
-                    Rectangle { visible: row.current; x: 0; y: 3; width: parent.width - 30; height: menu.rowH - 6; radius: 7; color: root.accent; opacity: 0.26 }
-                    Rectangle { visible: row.current; x: 0; y: 3; width: 4; height: menu.rowH - 6; color: root.accentInk }
-                    Text {
-                        text: modelData.label
-                        x: 20; anchors.verticalCenter: parent.verticalCenter
-                        color: row.current ? root.fg : root.fgDim
-                        font.pixelSize: 17; font.bold: true; font.family: root.menuFont
-                    }
-                    Text {
-                        anchors.right: parent.right; anchors.rightMargin: 30
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: { var r = root.settingsRev; return root.valueText(modelData.k); }
-                        color: row.current ? root.fg : root.accentInk
-                        font.pixelSize: 17; font.bold: true; font.family: root.menuFont
-                    }
-                }
-            }
-            Rectangle {   // scrollbar
-                visible: menuList.contentHeight > menuList.height
-                x: 384; y: 60; width: 4; height: menu.visibleRows * menu.rowH
-                radius: 2; color: root.bgS(0.183, 18)
-                Rectangle { x: 0; width: 4; radius: 2; color: root.accentInk
-                    y: parent.height * menuList.visibleArea.yPosition
-                    height: Math.max(24, parent.height * menuList.visibleArea.heightRatio) }
-            }
-
-            // ----- RIGHT: live preview of the running dash + per-row help -----
-            Text { x: 404; y: 55; text: "LIVE PREVIEW"; color: root.fgDim
-                   font.pixelSize: 13; font.bold: true; font.family: root.menuFont }
-            Rectangle {
-                x: 404; y: 74; width: 344; height: 206
-                color: root.bgS(0.058, 2); border.color: root.bgS(0.508, 29); border.width: 1; radius: 6; clip: true
-                ShaderEffectSource {
-                    anchors.fill: parent; anchors.margins: 1
-                    sourceItem: dashView
-                    live: root.menuOpen
-                    hideSource: false
-                }
-            }
-            Text {   // per-row help
-                x: 404; y: 294; width: 344; wrapMode: Text.WordWrap
-                text: root.helpText(root.items[root.sel].k)
-                color: root.fg2; font.pixelSize: 15; font.family: root.menuFont
-            }
-
-            Text {
-                text: "Default units:  km \u00B7 \u00B0C \u00B7 bar \u00B7 \u03BB"
-                color: root.fgDim; font.pixelSize: 12; font.family: root.menuFont
-                x: 24; y: parent.height - 46
-            }
-            Text {
-                text: "L / R  SELECT      U / D  CHANGE      EXIT + U  SAVE"
-                color: root.fgDim; font.pixelSize: 13; font.family: root.menuFont
-                anchors.horizontalCenter: parent.horizontalCenter
-                y: parent.height - 26
-            }
+        z: 5
+        target: root
+        open: root.menuOpen
+        schema: root.menuGroups
+        labelFont: root.menuFont
+        valueFont: root.menuFont
+        cText:   root.fg
+        cBox:    root.bgS(0.292, 18)
+        cPanel:  root.bgS(0.117, 4)
+        cPinned: root.bgS(0.525, 44)
+        cAccent: root.accentInk
+        onExitRequested: { root.saveConfig(); root.closeMenu(); }
+    }
+    Item {
+        z: 4
+        opacity: dashView.menuAmt
+        visible: opacity > 0.01
+        Text {
+            x: 446; y: 66; text: root.demoOn ? "DEMO" : "LIVE"; color: root.demoOn ? root.accentInk : root.fgDim
+            font.pixelSize: 12; font.bold: true; font.letterSpacing: 2; font.family: root.menuFont
+        }
+        Rectangle {      // frame around the shrunken dash
+            x: 444; y: 84; width: 352; height: 213
+            color: "transparent"; border.width: 2; border.color: root.accentInk
+        }
+        Rectangle {      // backing so the help stays readable over the moving grid
+            visible: root.menuGrid
+            x: 440; y: 303; width: 356; height: helpLine.height + 14
+            color: root.bgS(0.117, 4); opacity: 0.90
+            border.width: 1; border.color: root.bgS(0.292, 18)
+        }
+        Text {           // help for the selected row (or how to navigate)
+            id: helpLine
+            x: 446; y: 310; width: 346; wrapMode: Text.WordWrap
+            text: menu.focusKey !== "" ? root.helpText(menu.focusKey)
+                : (menu.level === 0 ? "Pick a group with Left / Right, then Up or Down to open it. Save & Exit stores the settings."
+                                    : "Up or Down returns to the groups.")
+            color: root.fg2; font.pixelSize: 15; font.family: root.menuFont
         }
     }
 
