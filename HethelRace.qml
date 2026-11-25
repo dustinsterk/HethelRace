@@ -1244,7 +1244,8 @@ Item {
             readonly property real th:  root.arcTheta(root.shiftMark)
             readonly property real thR: th * Math.PI / 180
             readonly property real ro:  root.arcRo(root.shiftMark)
-            opacity: (root.shiftByGear && !root.selfTest) ? 1 : 0
+            // only in a forward gear: in neutral, reverse or park there is no shift to mark
+            opacity: (root.shiftByGear && !root.selfTest && root.shiftGear >= 1 && root.shiftGear <= 6) ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: 200 } }
             visible: opacity > 0.01
             Rectangle {   // pointer just outside the bar
