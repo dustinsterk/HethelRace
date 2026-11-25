@@ -407,7 +407,7 @@ Item {
     property real coolantLow:    60    // °C (canonical)
     property int  fuelHigh:      90
     property int  fuelLow:       15    // % — fuel bar turns red below this
-    property int  fuelDamp:      3
+    property int  fuelDamp:      6     // FUEL DAMP 0 = raw ... 20 = heaviest (default 6: ~5 s window; 20: ~16 s)
     property real oilTempHigh:   130   // °C (canonical)
     property real oilTempLow:    80    // °C (canonical)
     property int  oilTempUnits:  0     // 0 = °C, 1 = °F, 2 = OFF (blank)
@@ -592,17 +592,17 @@ Item {
     //  Tank fuel sloshes under cornering / braking / hills, so the bar is eased
     //  toward the live reading with a velocity limit: rapid slosh averages out
     //  because the bar can only move so fast and the transient targets cancel.
-    //  FUEL DAMP 0 = raw/instant; 1 = light (settles in ~1-2s) ... 9 = heavy
+    //  FUEL DAMP 0 = raw/instant; 1 = light (settles in ~1-2s) ... 20 = heaviest
     //  (slow glide, ~8-10s, ignores transient slosh). fuelLevel is what every
     //  fuel readout reads (bar fill, low-fuel color, pump telltale).
-    readonly property real fuelVel: Math.max(8.0, 75.0 - (fuelDamp - 1) * 8.0)   // %/sec for damp 1..9
+    readonly property real fuelVel: Math.max(8.0, 75.0 - (fuelDamp - 1) * 8.0)   // %/sec: 75 at damp 1, down to a floor of 8 from damp 10 up
     property real fuelDisplay: 0
     Behavior on fuelDisplay { SmoothedAnimation { velocity: root.fuelVel } }
     // ---- trimmed-mean (median-window) fuel filter --------------------------
     //  Ring buffer of raw samples, sorted each tick; only the CENTER slice is
     //  averaged, so slosh spikes/dropouts sort to the ends and get discarded
     //  (no matching opposite transient needed to cancel them). fuelDamp sets the
-    //  window: 0 = raw/off, 1 -> 6 samples (~1.5s) ... 9 -> 30 (~7.5s). The
+    //  window: 0 = raw/off, 1 -> 6 samples (~1.5s) ... 9 -> 30 (~7.5s) ... 20 -> 63 (~16s). The
     //  filtered value feeds the smooth glide above.
     property var  fuelBuf: []
     readonly property int fuelWin: (fuelDamp <= 0) ? 1 : (3 + fuelDamp * 3)
@@ -2077,6 +2077,7 @@ Item {
         else { var n = Number(v); if (!isNaN(n)) root[k] = n; }
     }
     function sanitizeCfg() {       // keep hand-edited values inside what the dash can show
+        root.fuelDamp = clamp(root.fuelDamp, 0, 20);
         root.theme = clamp(root.theme, 0, 3); root.rightWing = clamp(root.rightWing, 0, 7);
         root.logoTint = clamp(root.logoTint, 0, 2); root.barColors = clamp(root.barColors, 0, 2);
         root.bgRed = clamp(root.bgRed, 0, 255); root.bgGreen = clamp(root.bgGreen, 0, 255); root.bgBlue = clamp(root.bgBlue, 0, 255);
@@ -2269,7 +2270,7 @@ Item {
         case "cun": return "Coolant temperature units.";
         case "fhi": return "Fuel sender reading for a full tank.";
         case "flo": return "Low-fuel warning below this.";
-        case "fdmp": return "Smooths the fuel reading.";
+        case "fdmp": return "Smooths fuel slosh. 0 = raw, 6 = about 5 s of readings, 20 = about 16 s. Higher is steadier in long corners but slower to show a refuel or a real low level.";
         case "othi": return "Oil-temperature warning above this.";
         case "otlo": return "Oil shown cold below this temperature.";
         case "otun": return "Oil-temperature units (or OFF).";
@@ -2338,7 +2339,7 @@ Item {
         case "cun":    root.tempunits    = ((root.tempunits + dir) % 3 + 3) % 3;    break;
         case "fhi":    root.fuelHigh     = clamp(root.fuelHigh + dir, 0, 100); break;
         case "flo":    root.fuelLow      = clamp(root.fuelLow  + dir, 0, 100); break;
-        case "fdmp":   root.fuelDamp     = clamp(root.fuelDamp + dir, 0, 9);   break;
+        case "fdmp":   root.fuelDamp     = clamp(root.fuelDamp + dir, 0, 20);   break;
         case "othi":   root.oilTempHigh  = clamp(root.oilTempHigh + dir * (root.oilTempUnits === 1 ? 5/9 : 1), 0, 250); break;
         case "otlo":   root.oilTempLow   = clamp(root.oilTempLow  + dir * (root.oilTempUnits === 1 ? 5/9 : 1), 0, 250); break;
         case "otun":   root.oilTempUnits = ((root.oilTempUnits + dir) % 3 + 3) % 3; break;
