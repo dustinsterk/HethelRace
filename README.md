@@ -5,6 +5,7 @@ A Lotus-inspired race dash for the GARW IC7 (800x480, Qt 5.12), built on the GTD
 - Arched, wedge-shaped rev bar (green -> Lotus yellow -> red) with a white leading edge, a fading tail when revs drop, and a tell-tale marker that holds the peak of each rev
 - Rev bar colors are adjustable in settings: ZONES (GREEN / YELLOW / RED FROM rpm), BLEND or ACCENT
 - Race animations, each with an FX: on/off row in settings: sequential LED shift lights, edge shift strobe, gear roll, redline bloom, limiter stutter, launch band (LAUNCH RPM), accel/brake bar, speed streaks, new-best flash, RACE-mode takeover, critical warning banner, cold-oil rev ceiling, shutdown sweep
+- Shift point per gear (Shift by gear group): the shift lights and shift flash follow the current gear's value, with a marker on the rev bar; MAIN falls back to Shift rpm
 - FX demo: selecting an FX row that is ON in the settings menu plays that effect in the live frame with simulated inputs
 - Large center gear in a chamfered shield; pops on each gear change and pulses red at the shift point
 - Speed under the gear, live RPM on the left (RPM/SPEED SWAP flips them)

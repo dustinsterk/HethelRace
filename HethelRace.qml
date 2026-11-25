@@ -23,6 +23,7 @@
 **       redline bloom, limiter stutter, launch band, accel/brake bar, speed
 **       streaks, new-best flash, RACE-mode takeover, critical warning banner,
 **       cold-oil rev ceiling, shutdown sweep
+**     * shift point per gear (Shift by gear group) with a marker on the rev bar
 **     * FX demo: selecting an FX row in the menu plays that effect in the live
 **       frame with simulated inputs
 **     * four side gauges (oil pressure / oil temp / AFR / coolant) that slide
@@ -226,6 +227,33 @@ Item {
     property int  rpmredline: 7000     // SHIFT RPM  (tach turns red above this)
     property int  rpmmax:     9000     // RPM LIMIT  (full-scale rpm)
     property int  rpmDamp:    3        // RPM DAMPING (1 = snappy ... 10 = smooth)
+
+    // --- shift point per gear: 0 = use SHIFT RPM. When set, the shift lights,
+    //     the red shift flash, the edge strobe and the gear-shield pulse use the
+    //     current gear's value, and a marker on the rev bar shows where it is.
+    //     The rev-bar color zones, cold rev limit and launch band do not move.
+    property int  shiftG1: 0
+    property int  shiftG2: 0
+    property int  shiftG3: 0
+    property int  shiftG4: 0
+    property int  shiftG5: 0
+    property int  shiftG6: 0
+    readonly property bool shiftByGear: shiftG1 > 0 || shiftG2 > 0 || shiftG3 > 0 || shiftG4 > 0 || shiftG5 > 0 || shiftG6 > 0
+    function shiftFor(g) {
+        var a = [shiftG1, shiftG2, shiftG3, shiftG4, shiftG5, shiftG6];
+        var v = (g >= 1 && g <= 6) ? a[g - 1] : 0;
+        return v > 0 ? Math.min(v, rpmmax) : rpmredline;
+    }
+    // The gear is calculated by the OS and can read N / a wrong gear for a moment
+    // mid-shift, so it has to hold for 200 ms before the shift point follows it.
+    // Neutral and reverse use SHIFT RPM.
+    property int  shiftGear: 0
+    Timer { id: shiftGearTimer; interval: 200; repeat: false
+            onTriggered: root.shiftGear = ((root.inputs & 0x4000000) !== 0) ? 0 : root.gearpos }
+    onGearposChanged: shiftGearTimer.restart()
+    readonly property int shiftNow: shiftFor(shiftGear)
+    property real shiftMark: shiftNow            // marker position; slides when the gear changes
+    Behavior on shiftMark { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
 
     // --- rev bar colors (as RaceX): ZONES = accent below GREEN FROM, then green,
     //     yellow from YELLOW FROM, red from RED FROM. BLEND = green fading into the
@@ -625,7 +653,7 @@ Item {
     //  scale, side-gauge units) changes; those handlers live just below.
 
     // ---- derived ----------------------------------------------------------
-    property bool overrev: rpmShown >= rpmredline    // crossed the shift value
+    property bool overrev: rpmShown >= shiftNow      // crossed the shift value (per gear, see shiftNow)
     // engine off / key-on-engine-off: rpm sits at 0 (a running engine idles well
     // above 0). Used to show a centerd placeholder instead of a lone right-aligned
     // "0", which looks lost in the fixed-width box until the car starts.
@@ -1211,6 +1239,30 @@ Item {
     Item {
         id: barMarks
         anchors.fill: parent
+        Item {        // shift point for the current gear (only when a per-gear value is set)
+            id: shiftPin
+            readonly property real th:  root.arcTheta(root.shiftMark)
+            readonly property real thR: th * Math.PI / 180
+            readonly property real ro:  root.arcRo(root.shiftMark)
+            opacity: (root.shiftByGear && !root.selfTest) ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: 200 } }
+            visible: opacity > 0.01
+            Rectangle {   // pointer just outside the bar
+                width: 7; height: 14; radius: 2; antialiasing: true
+                color: root.fg; border.width: 1; border.color: root.accentInk
+                x: root.arcCx + (shiftPin.ro + 11) * Math.sin(shiftPin.thR) - width / 2
+                y: root.arcCy - (shiftPin.ro + 11) * Math.cos(shiftPin.thR) - height / 2
+                rotation: shiftPin.th
+            }
+            Rectangle {   // hairline across the bar at that rpm
+                readonly property real rm: (root.arcRi + shiftPin.ro) / 2
+                width: 2; height: shiftPin.ro - root.arcRi + 2; antialiasing: true
+                color: root.fg; opacity: 0.7
+                x: root.arcCx + rm * Math.sin(shiftPin.thR) - width / 2
+                y: root.arcCy - rm * Math.cos(shiftPin.thR) - height / 2
+                rotation: shiftPin.th
+            }
+        }
         Repeater {    // launch band edges (LAUNCH RPM +/- 300)
             model: [ -300, 300 ]
             Rectangle {
@@ -1258,7 +1310,7 @@ Item {
                     smooth: true; antialiasing: true
                     opacity: {
                         var lit = ((root.inputs & modelData.bit) !== 0)
-                                  || (root.rpmShown >= root.rpmredline * modelData.rpmFrac);
+                                  || (root.rpmShown >= root.shiftNow * modelData.rpmFrac);
                         if (!lit) return 0.0;
                         return root.overrev ? (root.blinkOn ? 1.0 : 0.0) : 1.0;
                     }
@@ -1279,7 +1331,7 @@ Item {
                 Rectangle {
                     readonly property int  pair: index < 6 ? index : 11 - index          // 0 = outer ... 5 = center
                     readonly property int  bit:  pair < 2 ? 0x80000 : (pair < 4 ? 0x100000 : 0x200000)
-                    readonly property bool lit:  root.rpmShown >= root.rpmredline * (0.82 + 0.036 * pair)
+                    readonly property bool lit:  root.rpmShown >= root.shiftNow * (0.82 + 0.036 * pair)
                                                  || (root.inputs & bit) !== 0
                     width: 22; height: 10; radius: 5
                     color: !lit ? root.bgS(0.208, 16)
@@ -1301,7 +1353,7 @@ Item {
                 model: 5
                 Text {
                     readonly property int  bit: index === 2 ? 0x80000 : (index === 3 ? 0x100000 : (index === 4 ? 0x200000 : 0))
-                    readonly property bool lit: root.rpmShown >= root.rpmredline * (0.60 + 0.10 * index)
+                    readonly property bool lit: root.rpmShown >= root.shiftNow * (0.60 + 0.10 * index)
                                                 || (bit !== 0 && (root.inputs & bit) !== 0)
                     text: lit ? "\u2605" : "\u2606"
                     color: !lit ? root.bgS(0.508, 29)
@@ -1975,6 +2027,7 @@ Item {
     // Every persisted setting, by property name (the JSON key is the same name).
     readonly property var cfgKeys: [
         "rpmredline", "rpmmax", "rpmDamp",
+        "shiftG1", "shiftG2", "shiftG3", "shiftG4", "shiftG5", "shiftG6",
         "barColors", "greenFrom", "yellowFrom", "redFrom",
         "theme", "neonFont", "menuGrid", "red", "green", "blue", "bgRed", "bgGreen", "bgBlue", "nightlight", "vShift",
         "speedunits", "distunits", "placementSwap", "rightWing", "wingLogoName", "logoTint",
@@ -2085,7 +2138,7 @@ Item {
         oilPressShown = oilpress;   // start oil pressure at live (boot self-test owns the boot sweep)
         bootSweep.start();    // power-on self-test sweep
         introAnim.start();    // gauges slide / fade in alongside it
-        gearLast = gearLabel; maxPrev = maxTarget;
+        gearLast = gearLabel; maxPrev = maxTarget; shiftGear = gearpos;
     }
 
     // ---- D-pad (inputsdata bits via root.inputs; udp_packetdata fallback) --
@@ -2111,6 +2164,9 @@ Item {
             { k: "rdamp",  label: "Rpm damping" },    { k: "bcol",   label: "Bar colors" },
             { k: "gfrom",  label: "Green from" },     { k: "yfrom",  label: "Yellow from" },
             { k: "rfrom",  label: "Red from" } ] },
+        { name: "Shift by gear", rows: [
+            { k: "sg1", label: "1st gear" }, { k: "sg2", label: "2nd gear" }, { k: "sg3", label: "3rd gear" },
+            { k: "sg4", label: "4th gear" }, { k: "sg5", label: "5th gear" }, { k: "sg6", label: "6th gear" } ] },
         { name: "Display", rows: [
             { k: "theme",  label: "Theme" },          { k: "nfont",  label: "Neon font" },
             { k: "red",    label: "Accent red" },     { k: "green",  label: "Accent green" },
@@ -2166,6 +2222,7 @@ Item {
                                 || (rightWing !== 6 && (k === "ltint" || k === "lfile"))
                                 || (!sunset && k === "nfont"); }
     function isFx(k) { return k.indexOf("fx") === 0; }
+    function isSg(k) { return k.length === 3 && k.indexOf("sg") === 0; }       // per-gear shift rows sg1..sg6
     readonly property var fxHelp: ({
         fxSeq:      "12 LEDs fill from both ends to the center from 82% of SHIFT RPM, then flash. Off = the three rings.",
         fxEdge:     "Accent bars down both screen edges strobe at SHIFT RPM.",
@@ -2186,6 +2243,7 @@ Item {
     function isRampable(k) { return noRamp.indexOf(k) === -1 && !isFx(k); }
     function helpText(k) {
         if (isFx(k)) return fxHelp[k];
+        if (isSg(k)) return "Shift point for this gear. MAIN = use Shift rpm (Engine). When set, the shift lights and shift flash follow it in this gear and a marker shows it on the rev bar. Go below 2000 to return to MAIN.";
         switch (k) {
         case "bgr": case "bgg": case "bgb": return "Background tint (0-255): backdrop, panels and borders. Default 0/120/74 = Lotus green; 0/0/0 = carbon gray. Not used by the SUNSET / CITY MAP themes.";
         case "theme": return "DARK: light text on a dark background. LIGHT: dark text on near-white. SUNSET: neon dusk with palms. CITY MAP: night street map with card panels. Both use star shift lights, a red/blue shift strobe and fixed colors.";
@@ -2244,6 +2302,12 @@ Item {
     // dir = +1 (Up) / -1 (Down). Steps / clamps are chosen per setting.
     function applyKey(k, dir) {
         if (isFx(k)) { root[k] = !root[k]; root.settingsRev += 1; return; }
+        if (isSg(k)) {      // MAIN (0) -> starts from Shift rpm; stepping below 2000 returns to MAIN
+            var sp = "shiftG" + k.charAt(2), sv = root[sp];
+            sv = (sv <= 0) ? root.rpmredline : sv + dir * 100;
+            root[sp] = (sv < 2000) ? 0 : Math.min(sv, root.rpmmax);
+            root.settingsRev += 1; return;
+        }
         switch (k) {
         case "lrpm":   root.launchRpm    = clamp(root.launchRpm + dir * 100, 2300, root.rpmmax - 300); break;
         case "rwing":  root.rightWing    = ((root.rightWing + dir) % 8 + 8) % 8; break;
@@ -2308,6 +2372,7 @@ Item {
     // value shown on the right of each row
     function valueText(k) {
         if (isFx(k)) return root[k] ? "ON" : "OFF";
+        if (isSg(k)) { var gv = root["shiftG" + k.charAt(2)]; return gv > 0 ? String(gv) : "MAIN"; }
         switch (k) {
         case "lrpm":   return String(root.launchRpm);
         case "theme":  return root.theme === 1 ? "LIGHT" : (root.theme === 2 ? "SUNSET" : (root.theme === 3 ? "CITY MAP" : "DARK"));
@@ -2417,6 +2482,7 @@ Item {
         case "shift": case "limit": case "rdamp": case "bcol": case "gfrom": case "yfrom": case "rfrom":
         case "htn": case "fxBloom": case "fxLimiter": case "fxCold": case "fxLaunch": case "lrpm": return bar;
         case "hsl": case "fxSeq":                 return [222, 2, 356, 44];
+        case "sg1": case "sg2": case "sg3": case "sg4": case "sg5": case "sg6": return bar;
         // (no outline for fxEdge: it would sit on top of the edge bars the demo is showing)
         case "fxRoll":                            return [328, 132, 144, 136];
         // the speed readout: big under the gear, or on the left wing when RPM/SPEED SWAP is on
@@ -2460,6 +2526,7 @@ Item {
         if (!menuOpen) return "";
         var k = menu.focusKey;
         if (k === "lrpm") return fxLaunch ? "fxLaunch" : "";
+        if (isSg(k)) return k;
         return (k !== "" && isFx(k) && root[k]) ? k : "";
     }
     readonly property bool demoOn: demoKey !== ""
@@ -2478,9 +2545,13 @@ Item {
     function demoTri(t, period) { var p = (t % period) / period; return p < 0.5 ? p * 2 : 2 - p * 2; }   // 0..1..0
     function demoStep() {
         var t = demoT, k = demoKey, c, r = 3000, sp = 100, g = 3;
-        if (k === "fxSeq" || k === "fxEdge" || k === "fxBloom") {
+        if (isSg(k)) {                                       // that gear, revs climbing to its shift point
+            g = parseInt(k.charAt(2)); c = t % 4.0;
+            var sgv = shiftFor(g);
+            r = c < 2.2 ? sgv * (0.55 + 0.45 * c / 2.2) : (c < 3.4 ? sgv + 250 : sgv * 0.55); sp = 40 + g * 25;
+        } else if (k === "fxSeq" || k === "fxEdge" || k === "fxBloom") {
             c = t % 4.0;                                     // climb to the shift point, hold past it, drop
-            r = c < 2.2 ? rpmredline * (0.55 + 0.45 * c / 2.2) : (c < 3.4 ? rpmredline + 250 : rpmredline * 0.55);
+            r = c < 2.2 ? shiftNow * (0.55 + 0.45 * c / 2.2) : (c < 3.4 ? shiftNow + 250 : shiftNow * 0.55);
             if (k === "fxBloom") r = c < 2.2 ? revRedStart - 1500 + 1900 * c / 2.2 : (c < 3.4 ? revRedStart + 400 : revRedStart - 1500);
             sp = 130;
         } else if (k === "fxLimiter") {

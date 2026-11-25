@@ -45,7 +45,7 @@ Item {
     property color cPinned: "#9a9a9a"
     property color cAccent: "#ffd400"
 
-    readonly property int maxRows: 9      // option boxes that fit under the header
+    readonly property int maxRows: 10     // option boxes that fit under the header
 
     // Key of the value being edited, or "" when closed / browsing groups.
     readonly property string focusKey: (open && curRow) ? curRow.k : ""

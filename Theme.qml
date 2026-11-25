@@ -15,8 +15,8 @@ QtObject {
 
     // boxes
     readonly property int borderW: 2
-    readonly property int boxH:    32
-    readonly property int gap:     4
+    readonly property int boxH:    30
+    readonly property int gap:     3
 
     // layout
     readonly property int pad:   14
